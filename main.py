@@ -104,7 +104,7 @@ df_matriz_utilidade = pd.DataFrame(matriz_utilidade, index=indices_usuarios, col
 df_matriz_utilidade.to_csv('matriz_utilidade.csv')
 
 print("Matriz de Utilidade Gerada:")
-display(df_matriz_utilidade.head())
+print(df_matriz_utilidade.head(5))
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
