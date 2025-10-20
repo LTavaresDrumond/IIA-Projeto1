@@ -5,16 +5,70 @@ import os
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
+import nltk
+from nltk.corpus import stopwords
 from sklearn.metrics.pairwise import cosine_similarity
+from pathlib import Path
+
+# tenta baixar stopwords se necessário (uma vez)
+try:
+    _ = stopwords.words('portuguese')
+except Exception:
+    try:
+        nltk.download('stopwords')
+    except Exception:
+        pass
+
+def build_weighted_documents(df_jogos, weight_map=None):
+    """
+    Constrói documentos textuais por jogo aplicando pesos por campo.
+    weight_map: dict campo->int (repetições) ex: {'caracteristica_1':3, 'caracteristica_3':2}
+    """
+    if weight_map is None:
+        weight_map = {}
+    fields = ['caracteristica_1','caracteristica_2','caracteristica_3','caracteristica_4','caracteristica_5']
+    docs = []
+    for _, row in df_jogos.iterrows():
+        parts = []
+        for f in fields:
+            text = str(row.get(f, '')).strip()
+            if not text:
+                continue
+            reps = int(weight_map.get(f, 1))
+            parts.extend([text] * reps)
+        docs.append(' '.join(parts))
+    return docs
 
 @st.cache_data
-def build_tfidf_for_games(df_jogos):
-    docs = df_jogos[['caracteristica_1','caracteristica_2','caracteristica_3','caracteristica_4','caracteristica_5']].fillna('').agg(' '.join, axis=1).tolist()
-    vec = TfidfVectorizer()
+def build_tfidf_for_games(df_jogos, ngram_range=(1,2), min_df=1, sublinear_tf=True, weight_map=None, stop_words=None):
+    """
+    Constrói TfidfVectorizer com opções mais robustas e documentos ponderados.
+    - ngram_range: (1,1) ou (1,2)
+    - weight_map: repeats por campo para aumentar influência
+    - stop_words: lista ou 'english'/'portuguese' ou None
+    """
+    # default stopwords: combina pt + en se None
+    if stop_words is None:
+        sw_pt = []
+        sw_en = []
+        try:
+            sw_pt = stopwords.words('portuguese')
+        except Exception:
+            sw_pt = []
+        try:
+            sw_en = stopwords.words('english')
+        except Exception:
+            sw_en = []
+        combined = list(dict.fromkeys(sw_pt + sw_en))  # mantém ordem e remove duplicatas
+        stop_words = combined if combined else None
+
+    docs = build_weighted_documents(df_jogos, weight_map=weight_map)
+    vec = TfidfVectorizer(ngram_range=ngram_range, min_df=min_df, sublinear_tf=sublinear_tf, stop_words=stop_words)
     X = vec.fit_transform(docs)
     return vec, X
 
 def recommend_by_text(query: str, df_jogos, vec, X, top_n=5):
+    """mantém compatibilidade — aceita query, devolve top_n (nome, score)."""
     if not query or query.strip() == "":
         return []
     qv = vec.transform([query])
@@ -90,19 +144,26 @@ def clean_email(email):
     """Limpa e normaliza o email"""
     return email.strip().lower() if email else ""
 
+# caminho relativo do projeto (pasta onde está app.py)
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR  # se quiser usar subpasta, por ex. BASE_DIR / "data"
+
 # Carregamento de dados
 @st.cache_data
 def load_data():
     """Carrega dados e garante que a matriz de utilidade tenha índices normalizados."""
+    dados_path = DATA_DIR / "dados_jogos.csv"
+    matriz_path = DATA_DIR / "matriz_utilidade.csv"
+
     # dados_jogos
-    if os.path.exists("dados_jogos.csv"):
-        df_jogos = pd.read_csv("dados_jogos.csv")
+    if dados_path.exists():
+        df_jogos = pd.read_csv(dados_path)
     else:
-        raise FileNotFoundError("dados_jogos.csv não encontrado. Gere ou copie o arquivo no diretório do app.")
+        raise FileNotFoundError(f"{dados_path} não encontrado. Gere ou copie o arquivo no diretório do app.")
 
     # matriz_utilidade
-    if os.path.exists("matriz_utilidade.csv"):
-        df_matriz = pd.read_csv("matriz_utilidade.csv", index_col=0)
+    if matriz_path.exists():
+        df_matriz = pd.read_csv(matriz_path, index_col=0)
         # normaliza índices (remove espaços, torna lower)
         df_matriz.index = df_matriz.index.to_series().astype(str).str.strip().str.lower()
         # se existirem duplicados após strip/lower, mantém avaliação máxima
@@ -120,7 +181,7 @@ def load_data():
         jogos = df_jogos['nome_jogo'].tolist()
         df_matriz = pd.DataFrame(columns=jogos)
         # salva para persistência
-        df_matriz.to_csv("matriz_utilidade.csv")
+        df_matriz.to_csv(matriz_path)
 
     return df_jogos, df_matriz
 
@@ -295,72 +356,73 @@ elif st.session_state.page == 'rating':
 # Página de Recomendações
 if st.session_state.page == 'recommendations':
     st.header("Recomendações Personalizadas")
-    if st.session_state.user_email is None:
-        st.warning("Faça login e avalie alguns jogos antes de ver recomendações.")
-    else:
-        user = st.session_state.user_email.strip().lower()
-        # recarrega a matriz para garantir persistência recente
-        try:
-            df_matriz_utilidade = pd.read_csv("matriz_utilidade.csv", index_col=0)
-            df_matriz_utilidade.index = df_matriz_utilidade.index.to_series().astype(str).str.strip().str.lower()
-            # garante colunas na ordem
-            df_matriz_utilidade = df_matriz_utilidade.reindex(columns=df_jogos['nome_jogo'].tolist(), fill_value=0.0)
-        except Exception:
-            st.error("Erro ao carregar avaliações salvas.")
-            st.stop()
 
-        recomendacoes_top_n = st.slider("Número de recomendações", 1, 10, 5)
-        recomendacoes = get_recommendations(user, df_jogos, df_matriz_utilidade, top_n=recomendacoes_top_n)
+    # ----- Busca textual (TF-IDF) -----
+    query = st.text_input("O que você está procurando? (ex.: 'mundo aberto fantasia')", value="")
+    buscar = st.button("Buscar por Texto")
 
-        if not recomendacoes:
-            st.info("Não há recomendações — avalie pelo menos 3 jogos e salve as avaliações.")
+    # constrói vetorizador (cacheado) e matriz TF-IDF
+    vec, X = build_tfidf_for_games(df_jogos, ngram_range=(1,2), min_df=1, weight_map={'caracteristica_1':2,'caracteristica_3':2})
+
+    if buscar and query.strip():
+        results_text = recommend_by_text(query, df_jogos, vec, X, top_n=10)
+        if not results_text:
+            st.info("Nenhum resultado encontrado para a consulta.")
         else:
-            for nome, score in recomendacoes:
+            st.subheader("Resultados da busca por texto")
+            for nome, score in results_text:
+                st.markdown(f"**{nome}** — similaridade: {score:.3f}")
+
+    # ----- Recomendações por perfil (se usuário logado) -----
+    if st.session_state.user_email:
+        st.write("---")
+        st.subheader("Recomendações baseadas no seu perfil")
+        perfil_rec = get_recommendations(st.session_state.user_email, df_jogos, df_matriz_utilidade, top_n=10)
+        if not perfil_rec:
+            st.info("Avalie pelo menos 3 jogos e salve para obter recomendações de perfil.")
+        else:
+            for nome, score in perfil_rec:
                 st.markdown(f"**{nome}** — relevância: {score:.3f}")
 
-        # campo de busca textual
-        query = st.text_input("O que você está procurando? (ex.: 'mundo aberto fantasia narrativa')")
-        col1, col2 = st.columns([3,1])
-        with col2:
-            search_btn = st.button("Buscar por Texto")
-        # prepara tfidf se necessário
-        vec, X = build_tfidf_for_games(df_jogos)
-        if search_btn and query.strip():
-            results = recommend_by_text(query, df_jogos, vec, X, top_n=10)
-            if not results:
-                st.info("Nenhum resultado para a consulta.")
-            else:
-                st.subheader("Resultados da busca por texto")
-                for nome, score in results:
-                    st.markdown(f"**{nome}** — similaridade: {score:.3f}")
+    # ----- Botões de navegação -----
+    col1, col2 = st.columns([3,1])
+    with col2:
+        if st.button("Voltar para Avaliações"):
+            st.session_state.page = 'rating'
+            try:
+                st.rerun()
+            except Exception:
+                st.info("Atualize a página (F5).")
+                st.stop()
+# Página de Busca e Recomposição
+if st.session_state.page == 'search_recombine':
+    st.header("Busca por Texto e Recomposição")
+    query = st.text_input("O que você procura?", value="")
+    col1, col2 = st.columns([3,1])
+    with col2:
+        alpha = st.slider("Peso do texto (alpha)", 0.0, 1.0, 0.6, 0.05)
 
-        # opcional: combinar com recomendações por perfil (se quiser)
-        combine = st.checkbox("Combinar com meu perfil (hybrid)", value=False)
-        if combine:
-            perfil_rec = get_recommendations(st.session_state.user_email, df_jogos, df_matriz_utilidade, top_n=10)
-            # transforma em dicionário nome->score
-            perfil_scores = {n: s for n, s in perfil_rec}
-            # se query vazia, só mostra perfil; se tiver query, faz combinação simples
-            if query.strip():
-                text_results = dict(recommend_by_text(query, df_jogos, vec, X, top_n=len(df_jogos)))
-                alpha = 0.6  # peso para texto
-                combined = {}
-                for i, row in df_jogos.iterrows():
-                    name = row['nome_jogo']
-                    s_text = text_results.get(name, 0.0)
-                    s_perfil = perfil_scores.get(name, 0.0)
-                    combined[name] = alpha * s_text + (1-alpha) * s_perfil
-                top = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:10]
-                st.subheader("Resultados combinados (texto + perfil)")
-                for nome, score in top:
-                    st.markdown(f"**{nome}** — score combinado: {score:.3f}")
+    # gera scores por texto e por perfil
+    vec, X = build_tfidf_for_games(df_jogos)  # já existente
+    scores_text = {}
+    if query.strip():
+        text_results = recommend_by_text(query, df_jogos, vec, X, top_n=len(df_jogos))
+        scores_text = {n: s for n, s in text_results}
 
-        col1, col2 = st.columns([3,1])
-        with col2:
-            if st.button("Voltar para Avaliações"):
-                st.session_state.page = 'rating'
-                try:
-                    st.rerun()
-                except Exception:
-                    st.info("Atualize a página (F5).")
-                    st.stop()
+    scores_profile = {}
+    profile_results = get_recommendations(st.session_state.user_email, df_jogos, df_matriz_utilidade, top_n=len(df_jogos))
+    scores_profile = {n: s for n, s in profile_results}
+
+    # combinação simples
+    combined = {}
+    for name in df_jogos['nome_jogo']:
+        t = scores_text.get(name, 0.0)
+        p = scores_profile.get(name, 0.0)
+        combined[name] = alpha * t + (1 - alpha) * p
+
+    top_n = st.slider("Número de resultados combinados", 1, 20, 5)
+    top = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:top_n]
+
+    st.write("Resultados combinados:")
+    for nome, score in top:
+        st.markdown(f"**{nome}** — score combinado: {score:.4f}")

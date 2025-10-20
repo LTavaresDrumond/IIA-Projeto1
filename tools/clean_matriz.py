@@ -1,7 +1,9 @@
 import pandas as pd
 from pathlib import Path
 
-p = Path(r"c:\Users\vinic\Documents\GitHub\IIA-Projeto1\matriz_utilidade.csv")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+p = PROJECT_ROOT / "matriz_utilidade.csv"
+
 if not p.exists():
     print("Arquivo matriz_utilidade.csv não encontrado em:", p)
     raise SystemExit(1)
@@ -12,7 +14,7 @@ df = pd.read_csv(p, index_col=0)
 new_index = df.index.to_series().astype(str).str.strip().str.lower()
 df.index = new_index
 
-# Se houver duplicatas, mantemos a avaliação máxima por jogo (pode ajustar para média)
+# Se houver duplicatas, mantemos a avaliação máxima por jogo
 df = df.groupby(df.index).max()
 
 # Salva versão limpa (faz backup do original)
