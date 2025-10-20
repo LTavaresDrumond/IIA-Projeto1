@@ -302,27 +302,56 @@ st.markdown(
     /* Game card styling - apply to containers in columns */
     [data-testid="column"] > div > div > div[data-testid="stVerticalBlock"] {
         background-color: #ffffff;
-        border-radius: 10px;
+        border-radius: 15px;
         padding: 20px;
         margin: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        min-height: 600px;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        height: 680px;
         display: flex;
         flex-direction: column;
+        transition: transform 0.2s, box-shadow 0.2s;
     }
 
-    /* Ensure images maintain aspect ratio and size */
+    [data-testid="column"] > div > div > div[data-testid="stVerticalBlock"]:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    /* Fixed image container and size */
     [data-testid="stImage"] {
         width: 100%;
-        min-height: 352px;
+        height: 352px;
+        overflow: hidden;
+        border-radius: 10px;
+        margin-bottom: 15px;
+        flex-shrink: 0;
     }
     
     [data-testid="stImage"] img {
         width: 100% !important;
-        height: auto !important;
-        min-height: 352px !important;
+        height: 352px !important;
         object-fit: cover !important;
         display: block !important;
+    }
+
+    /* Game title styling */
+    [data-testid="stVerticalBlock"] > div > div > p > strong {
+        font-size: 18px;
+        color: #1a1a2e;
+        display: block;
+        margin-bottom: 8px;
+    }
+
+    /* Caption styling */
+    [data-testid="stVerticalBlock"] .stCaption {
+        margin-bottom: 15px;
+        flex-shrink: 0;
+    }
+
+    /* Slider container */
+    [data-testid="stVerticalBlock"] .stSlider {
+        margin-top: auto;
+        padding-top: 10px;
     }
 
     /* Rating display */
