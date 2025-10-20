@@ -3,9 +3,11 @@
 import time
 from pathlib import Path
 from typing import Dict, List
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -297,13 +299,30 @@ st.markdown(
         border: none !important;
     }
 
-    /* Game card styling */
-    .game-card {
+    /* Game card styling - apply to containers in columns */
+    [data-testid="column"] > div > div > div[data-testid="stVerticalBlock"] {
         background-color: #ffffff;
         border-radius: 10px;
         padding: 20px;
         margin: 10px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        min-height: 600px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* Ensure images maintain aspect ratio and size */
+    [data-testid="stImage"] {
+        width: 100%;
+        min-height: 352px;
+    }
+    
+    [data-testid="stImage"] img {
+        width: 100% !important;
+        height: auto !important;
+        min-height: 352px !important;
+        object-fit: cover !important;
+        display: block !important;
     }
 
     /* Rating display */
@@ -350,6 +369,85 @@ def safe_rerun():
 def clean_email(email):
     """Limpa e normaliza o email"""
     return email.strip().lower() if email else ""
+
+
+# IGDB API Functions
+@st.cache_data(ttl=86400)  # Cache por 24 horas
+def get_igdb_access_token(client_id: str, client_secret: str) -> str:
+    """Obtém token de acesso da IGDB API"""
+    try:
+        url = "https://id.twitch.tv/oauth2/token"
+        params = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+        }
+        response = requests.post(url, params=params)
+        if response.status_code == 200:
+            return response.json().get("access_token", "")
+        return ""
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=604800)  # Cache por 7 dias
+def search_game_image(game_name: str, client_id: str, access_token: str) -> str:
+    """Busca imagem do jogo na IGDB API"""
+    # Fallback: imagem padrão (ícone de jogo genérico)
+    fallback_image = "https://placehold.co/264x352/1a1a2e/white?text=Game"
+    
+    if not client_id or not access_token:
+        return fallback_image
+
+    try:
+        url = "https://api.igdb.com/v4/games"
+        headers = {"Client-ID": client_id, "Authorization": f"Bearer {access_token}"}
+
+        # Busca o jogo pelo nome
+        data = f'search "{game_name}"; fields name,cover.url; limit 1;'
+        response = requests.post(url, headers=headers, data=data, timeout=5)
+
+        if response.status_code == 200:
+            games = response.json()
+            if games and len(games) > 0:
+                game = games[0]
+                if "cover" in game and "url" in game["cover"]:
+                    # Converte para imagem grande (264x352)
+                    cover_url = game["cover"]["url"]
+                    cover_url = cover_url.replace("t_thumb", "t_cover_big")
+                    return "https:" + cover_url
+
+        # Se não encontrou a imagem, retorna fallback
+        return fallback_image
+    except Exception:
+        return fallback_image
+
+
+def get_game_image(game_name: str) -> str:
+    """Obtém imagem do jogo com fallback para placeholder"""
+    fallback_image = "https://placehold.co/264x352/1a1a2e/white?text=Game"
+    
+    try:
+        # Configurações da API - você precisa obter estas credenciais em https://dev.twitch.tv/console
+        # Para desenvolvimento, pode deixar vazio e usar placeholders
+        IGDB_CLIENT_ID = st.secrets.get("IGDB_CLIENT_ID", "")
+        IGDB_CLIENT_SECRET = st.secrets.get("IGDB_CLIENT_SECRET", "")
+    except Exception:
+        # Se não houver secrets configurados, usa placeholder
+        return fallback_image
+
+    if not IGDB_CLIENT_ID or not IGDB_CLIENT_SECRET:
+        # Usa placeholder se não tiver credenciais configuradas
+        return fallback_image
+
+    # Obtém token de acesso
+    access_token = get_igdb_access_token(IGDB_CLIENT_ID, IGDB_CLIENT_SECRET)
+
+    if not access_token:
+        return fallback_image
+
+    # Busca imagem do jogo
+    return search_game_image(game_name, IGDB_CLIENT_ID, access_token)
 
 
 # caminho relativo do projeto (pasta onde está app.py)
@@ -680,11 +778,11 @@ elif st.session_state.page == "rating":
         cols = st.columns(3)
         for i, row in df_jogos.iterrows():
             with cols[i % 3]:
+                # Usa st.container() que aplica o CSS do .game-card através de classes Streamlit
                 with st.container():
-                    st.markdown('<div class="game-card">', unsafe_allow_html=True)
-
                     # Imagem e informações do jogo
-                    # st.image("https://placehold.in/200@2x", use_container_width=True)
+                    game_image_url = get_game_image(row["nome_jogo"])
+                    st.image(game_image_url, use_container_width=True)
                     st.markdown(f"**{row['nome_jogo']}**")
                     st.caption(f"{row['caracteristica_1']} | {row['caracteristica_2']}")
 
@@ -723,8 +821,6 @@ elif st.session_state.page == "rating":
                         df_matriz_utilidade.loc[
                             st.session_state.user_email, row["nome_jogo"]
                         ] = 0
-
-                    st.markdown("</div>", unsafe_allow_html=True)
 
         if st.button("Salvar Avaliações"):
             # Salva as avaliações usando a função que atualiza o arquivo

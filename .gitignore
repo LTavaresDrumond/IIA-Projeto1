@@ -2,3 +2,25 @@
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
 __pycache__/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
