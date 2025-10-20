@@ -1,0 +1,2 @@
+ngram_range,min_df,weight_map,precision,recall,map,n_users,time_sec,timestamp
+1-2,1,"{'caracteristica_1':2,'caracteristica_3':2}",0.06000000000000001,0.6,0.1816587301587302,50,0.1929302215576172,2025-10-20T22:19:57.615098
