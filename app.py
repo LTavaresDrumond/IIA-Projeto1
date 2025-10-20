@@ -1,17 +1,16 @@
 # app.py
-
-import streamlit as st
 import os
-import pandas as pd
+
 import numpy as np
+import pandas as pd
+import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Configuração da página
+# ===================== Config =====================
 st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="wide")
-
-# CSS para melhorar aparência dos botões de estrela
-st.markdown("""
+st.markdown(
+    """
 <style>
     .stButton > button {
         background: none;
@@ -21,117 +20,99 @@ st.markdown("""
         line-height: 1;
         cursor: pointer;
     }
-    .stButton > button:hover {
-        color: gold;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Adicione este CSS no início do arquivo, após st.set_page_config
-st.markdown("""
-<style>
+    .stButton > button:hover { color: gold; }
     .game-card {
-        background-color: #ffffff;
-        border-radius: 10px;
-        padding: 20px;
-        margin: 10px;
+        background-color: #ffffff; border-radius: 10px; padding: 20px; margin: 10px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
-    .rating-display {
-        color: gold;
-        font-size: 20px;
-        margin-top: 5px;
-    }
+    .rating-display { color: gold; font-size: 20px; margin-top: 5px; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-def rating_stars(key, current_value=0):
-    """Cria 5 botões de estrela para avaliação"""
-    cols = st.columns(5)
-    rating = current_value
-    
-    for i in range(5):
-        with cols[i]:
-            # Estrela preenchida se valor atual >= posição+1
-            star = "⭐" if i < rating else "☆"
-            if st.button(star, key=f"{key}_star_{i+1}"):
-                rating = i + 1 if rating != i + 1 else 0
-    
-    return rating
 
-# Configuração básica
-st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="wide")
+# ===================== Estado & Navegação =====================
+def init_state():
+    st.session_state.setdefault("page", "login")
+    st.session_state.setdefault("user_email", None)
+    st.session_state.setdefault("user_ratings", {})
 
-# Funções auxiliares
-def safe_rerun():
-    """Tenta recarregar a página de forma segura"""
+
+def navigate(page: str):
+    st.session_state.page = page
     try:
         st.rerun()
-    except:
-        st.info("Por favor, atualize a página (F5)")
+    except Exception:
+        st.info("Atualize a página (F5)")
         st.stop()
 
-def clean_email(email):
-    """Limpa e normaliza o email"""
+
+def clean_email(email: str) -> str:
     return email.strip().lower() if email else ""
 
-# Carregamento de dados
+
+# ===================== Dados =====================
+def _normalize_matrix_indices(df_matriz):
+    df_matriz.index = df_matriz.index.to_series().astype(str).str.strip().str.lower()
+    if df_matriz.index.duplicated().any():
+        df_matriz = df_matriz.groupby(df_matriz.index).max()
+    return df_matriz
+
+
+def _align_matrix_columns(df_matriz, jogos):
+    for j in jogos:
+        if j not in df_matriz.columns:
+            df_matriz[j] = 0.0
+    return df_matriz.reindex(columns=jogos, fill_value=0.0)
+
+
 @st.cache_data
 def load_data():
-    """Carrega dados e garante que a matriz de utilidade tenha índices normalizados."""
-    # dados_jogos
-    if os.path.exists("dados_jogos.csv"):
-        df_jogos = pd.read_csv("dados_jogos.csv")
-    else:
-        raise FileNotFoundError("dados_jogos.csv não encontrado. Gere ou copie o arquivo no diretório do app.")
+    if not os.path.exists("dados_jogos.csv"):
+        raise FileNotFoundError("dados_jogos.csv não encontrado.")
+    df_jogos = pd.read_csv("dados_jogos.csv")
+    jogos = df_jogos["nome_jogo"].tolist()
 
-    # matriz_utilidade
     if os.path.exists("matriz_utilidade.csv"):
         df_matriz = pd.read_csv("matriz_utilidade.csv", index_col=0)
-        # normaliza índices (remove espaços, torna lower)
-        df_matriz.index = df_matriz.index.to_series().astype(str).str.strip().str.lower()
-        # se existirem duplicados após strip/lower, mantém avaliação máxima
-        if df_matriz.index.duplicated().any():
-            df_matriz = df_matriz.groupby(df_matriz.index).max()
-        # garante colunas no mesmo order/nome dos jogos (preenche zeros se faltar)
-        jogos = df_jogos['nome_jogo'].tolist()
-        for j in jogos:
-            if j not in df_matriz.columns:
-                df_matriz[j] = 0.0
-        # reindexa colunas na mesma ordem dos jogos
-        df_matriz = df_matriz.reindex(columns=jogos, fill_value=0.0)
+        df_matriz = _normalize_matrix_indices(df_matriz)
+        df_matriz = _align_matrix_columns(df_matriz, jogos)
     else:
-        # cria matriz vazia (0 usuários)
-        jogos = df_jogos['nome_jogo'].tolist()
         df_matriz = pd.DataFrame(columns=jogos)
-        # salva para persistência
         df_matriz.to_csv("matriz_utilidade.csv")
 
     return df_jogos, df_matriz
 
-# Funções de recomendação (cacheadas para eficiência)
+
+# ===================== Recomendação =====================
 @st.cache_data
 def calcular_similaridade_jogos(df_jogos):
-    perfil = df_jogos[['caracteristica_1','caracteristica_2','caracteristica_3','caracteristica_4','caracteristica_5']].fillna('').agg(' '.join, axis=1)
+    perfil = (
+        df_jogos[
+            [
+                "caracteristica_1",
+                "caracteristica_2",
+                "caracteristica_3",
+                "caracteristica_4",
+                "caracteristica_5",
+            ]
+        ]
+        .fillna("")
+        .agg(" ".join, axis=1)
+    )
     tfidf = TfidfVectorizer()
     matriz_tfidf = tfidf.fit_transform(perfil)
-    sim = cosine_similarity(matriz_tfidf)
-    return sim
+    return cosine_similarity(matriz_tfidf)
 
-def get_recommendations(user_email, df_jogos, df_matriz, top_n=5):
-    """Gera recomendações por conteúdo para user_email (email deve ser normalizado)."""
-    if user_email is None:
-        return []
-    user = str(user_email).strip().lower()
-    if user not in df_matriz.index:
-        return []
-    # pega avaliações > 0 do usuário
-    row = df_matriz.loc[user]
-    user_ratings = {col: int(v) for col, v in row.items() if pd.notnull(v) and float(v) > 0}
-    if not user_ratings:
-        return []
-    sim = calcular_similaridade_jogos(df_jogos)
-    name_to_idx = {name: idx for idx, name in enumerate(df_jogos['nome_jogo'])}
+
+def _get_user_ratings(user_email, df_matriz):
+    row = df_matriz.loc[user_email]
+    return {col: int(v) for col, v in row.items() if pd.notnull(v) and float(v) > 0}
+
+
+def _calculate_recommendation_scores(user_ratings, df_jogos, sim):
+    name_to_idx = {name: idx for idx, name in enumerate(df_jogos["nome_jogo"])}
     scores = np.zeros(len(df_jogos))
     sim_sums = np.zeros(len(df_jogos))
     for nome, rating in user_ratings.items():
@@ -140,175 +121,208 @@ def get_recommendations(user_email, df_jogos, df_matriz, top_n=5):
             sim_col = sim[i]
             scores += sim_col * rating
             sim_sums += sim_col
-    with np.errstate(divide='ignore', invalid='ignore'):
+    return scores, sim_sums, name_to_idx
+
+
+def _get_final_predictions(scores, sim_sums, user_ratings, name_to_idx):
+    with np.errstate(divide="ignore", invalid="ignore"):
         pred = np.divide(scores, sim_sums)
         pred[np.isnan(pred)] = 0
-    # bloquear já avaliados
     for nome in user_ratings:
         if nome in name_to_idx:
             pred[name_to_idx[nome]] = -1e9
+    return pred
+
+
+def get_recommendations(user_email, df_jogos, df_matriz, top_n=5):
+    if not user_email or user_email not in df_matriz.index:
+        return []
+    user_ratings = _get_user_ratings(user_email, df_matriz)
+    if not user_ratings:
+        return []
+    sim = calcular_similaridade_jogos(df_jogos)
+    scores, sim_sums, name_to_idx = _calculate_recommendation_scores(
+        user_ratings, df_jogos, sim
+    )
+    pred = _get_final_predictions(scores, sim_sums, user_ratings, name_to_idx)
     top_idx = np.argsort(-pred)[:top_n]
-    return [(df_jogos.loc[i, 'nome_jogo'], float(pred[i])) for i in top_idx]
+    return [(df_jogos.loc[i, "nome_jogo"], float(pred[i])) for i in top_idx]
 
-# Inicialização do estado
-if 'page' not in st.session_state:
-    st.session_state.page = 'login'
-if 'user_email' not in st.session_state:
-    st.session_state.user_email = None
-if 'user_ratings' not in st.session_state:
-    st.session_state.user_ratings = {}
 
-# Carrega dados
-df_jogos, df_matriz_utilidade = load_data()
-
-# Interface principal
-st.title("Sistema de Recomendação de Jogos")
-
-# Página de login
-if st.session_state.page == 'login':
+# ===================== Páginas =====================
+def page_login(df_jogos, df_matriz_utilidade):
+    st.subheader("Login")
     with st.form("login_form"):
-        st.subheader("Login")
         email = st.text_input("E-mail")
-        password = st.text_input("Senha", type="password")
+        st.text_input("Senha", type="password")
         submitted = st.form_submit_button("Entrar")
-        
-        if submitted:
-            if not email.strip():
-                st.error("Digite um e-mail válido")
-            else:
-                try:
-                    clean_user_email = clean_email(email)
-                    st.session_state.user_email = clean_user_email
-                    st.session_state.page = 'rating'
-                    
-                    # Verifica/cria usuário na matriz
-                    if clean_user_email not in df_matriz_utilidade.index:
-                        nova_linha = pd.Series(0, index=df_jogos['nome_jogo'], name=clean_user_email)
-                        df_matriz_utilidade = pd.concat([df_matriz_utilidade, nova_linha.to_frame().T])
-                        df_matriz_utilidade.to_csv("matriz_utilidade.csv")
-                        st.success("Novo usuário criado!")
-                    
-                    safe_rerun()
-                except Exception as e:
-                    st.error(f"Erro no login: {str(e)}")
-                    st.session_state.page = 'login'
-                    st.session_state.user_email = None
-    
-    st.info("Digite e-mail e senha para criar uma conta (protótipo)")
 
-elif st.session_state.page == 'rating':
+    if not submitted:
+        st.info("Digite e-mail e senha para criar uma conta (protótipo)")
+        return
+
+    if not email.strip():
+        st.error("Digite um e-mail válido")
+        return
+
+    clean_user_email = clean_email(email)
+    st.session_state.user_email = clean_user_email
+
+    # Garante o usuário na matriz
+    if clean_user_email not in df_matriz_utilidade.index:
+        nova_linha = pd.Series(0, index=df_jogos["nome_jogo"], name=clean_user_email)
+        df_matriz_utilidade = pd.concat([df_matriz_utilidade, nova_linha.to_frame().T])
+        df_matriz_utilidade.to_csv("matriz_utilidade.csv")
+        st.success("Novo usuário criado!")
+
+    navigate("rating")
+
+
+def _rating_header():
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        st.write(f"Usuário: {st.session_state.user_email}")
+        if st.button("Logout"):
+            st.session_state.user_email = None
+            st.session_state.user_ratings = {}
+            navigate("login")
+
+
+def _get_current_rating(df_matriz_utilidade, user_email, game_name):
     try:
-        # Header com logout
-        col1, col2 = st.columns([3,1])
-        with col2:
-            st.write(f"Usuário: {st.session_state.user_email}")
-            if st.button("Logout"):
-                st.session_state.page = 'login'
-                st.session_state.user_email = None
-                st.session_state.user_ratings = {}
-                safe_rerun()
-        
-        st.subheader("Avalie os Jogos")
-        
-        # Grid de cards (3 por linha)
-        cols = st.columns(3)
-        for i, row in df_jogos.iterrows():
-            with cols[i % 3]:
-                with st.container():
-                    st.markdown('<div class="game-card">', unsafe_allow_html=True)
-                    
-                    # Imagem e informações do jogo
-                    # st.image("https://placehold.in/200@2x", use_container_width=True)
-                    st.markdown(f"**{row['nome_jogo']}**")
-                    st.caption(f"{row['caracteristica_1']} | {row['caracteristica_2']}")
-                    
-                    # Slider de avaliação
-                    try:
-                        current_rating = df_matriz_utilidade.loc[st.session_state.user_email, row['nome_jogo']]
-                        current_rating = int(current_rating) if pd.notnull(current_rating) else 0
-                    except (KeyError, ValueError):
-                        current_rating = 0
-                    
-                    rating = st.slider(
-                        "Avaliação",
-                        min_value=0,
-                        max_value=5,
-                        value=current_rating,
-                        key=f"rating_{i}"
-                    )
-                    
-                    # Exibe estrelas baseado na avaliação
-                    if rating > 0:
-                        st.markdown(
-                            f'<div class="rating-display">{"★" * rating}{"☆" * (5-rating)}</div>',
-                            unsafe_allow_html=True
-                        )
-                        st.session_state.user_ratings[row['nome_jogo']] = rating
-                        df_matriz_utilidade.loc[st.session_state.user_email, row['nome_jogo']] = rating
-                    else:
-                        st.write("Sem avaliação")
-                        st.session_state.user_ratings.pop(row['nome_jogo'], None)
-                        df_matriz_utilidade.loc[st.session_state.user_email, row['nome_jogo']] = 0
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
-        
+        current_rating = df_matriz_utilidade.loc[user_email, game_name]
+        return int(current_rating) if pd.notnull(current_rating) else 0
+    except (KeyError, ValueError):
+        return 0
+
+
+def _update_game_rating(rating, game_name, df_matriz_utilidade, user_email):
+    if rating > 0:
+        st.markdown(
+            f'<div class="rating-display">{"★" * rating}{"☆" * (5-rating)}</div>',
+            unsafe_allow_html=True,
+        )
+        st.session_state.user_ratings[game_name] = rating
+        df_matriz_utilidade.loc[user_email, game_name] = rating
+    else:
+        st.write("Sem avaliação")
+        st.session_state.user_ratings.pop(game_name, None)
+        df_matriz_utilidade.loc[user_email, game_name] = 0
+
+
+def _render_game_card(i, row, df_matriz_utilidade, user_email):
+    st.markdown('<div class="game-card">', unsafe_allow_html=True)
+    st.markdown(f"**{row['nome_jogo']}**")
+    st.caption(f"{row['caracteristica_1']} | {row['caracteristica_2']}")
+
+    current_rating = _get_current_rating(
+        df_matriz_utilidade, user_email, row["nome_jogo"]
+    )
+    rating = st.slider(
+        "Avaliação", min_value=0, max_value=5, value=current_rating, key=f"rating_{i}"
+    )
+    _update_game_rating(rating, row["nome_jogo"], df_matriz_utilidade, user_email)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def page_rating(df_jogos, df_matriz_utilidade):
+    if st.session_state.user_email is None:
+        st.warning("Faça login primeiro.")
+        if st.button("Ir para Login"):
+            navigate("login")
+        return
+
+    _rating_header()
+    st.subheader("Avalie os Jogos")
+
+    cols = st.columns(3)
+    user_email = st.session_state.user_email
+    for i, row in df_jogos.iterrows():
+        with cols[i % 3]:
+            with st.container():
+                _render_game_card(i, row, df_matriz_utilidade, user_email)
+
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("Salvar Avaliações"):
             df_matriz_utilidade.to_csv("matriz_utilidade.csv")
             st.success("Avaliações salvas!")
-            # redireciona automaticamente para a página de Recomendações
-            st.session_state.page = 'recommendations'
-            try:
-                st.rerun()
-            except Exception:
-                st.info("Atualize a página (F5) para ver as recomendações.")
-                st.stop()
+            navigate("recommendations")
+    with c2:
+        if st.button("Ver Recomendações (sem salvar)"):
+            navigate("recommendations")
 
-        # botão visível que leva à página de recomendações sem salvar
-        if st.button("Ver Recomendações"):
-            st.session_state.page = 'recommendations'
-            try:
-                st.rerun()
-            except Exception:
-                st.info("Atualize a página (F5) para ver as recomendações.")
-                st.stop()
 
-    except Exception as e:
-        st.error(f"Erro ao carregar perfil: {str(e)}")
-        st.session_state.page = 'login'
-        safe_rerun()
+def _load_utility_matrix(df_jogos):
+    df_matriz_utilidade = pd.read_csv("matriz_utilidade.csv", index_col=0)
+    df_matriz_utilidade.index = (
+        df_matriz_utilidade.index.to_series().astype(str).str.strip().str.lower()
+    )
+    df_matriz_utilidade = df_matriz_utilidade.reindex(
+        columns=df_jogos["nome_jogo"].tolist(), fill_value=0.0
+    )
+    return df_matriz_utilidade
 
-# Página de Recomendações
-if st.session_state.page == 'recommendations':
-    st.header("Recomendações Personalizadas")
-    if st.session_state.user_email is None:
+
+def _check_user_authenticated():
+    user = (st.session_state.user_email or "").strip().lower()
+    if not user:
         st.warning("Faça login e avalie alguns jogos antes de ver recomendações.")
+        if st.button("Ir para Login"):
+            navigate("login")
+        return None
+    return user
+
+
+def _display_recommendations(recs):
+    if not recs:
+        st.info(
+            "Não há recomendações — avalie pelo menos 3 jogos e salve as avaliações."
+        )
     else:
-        user = st.session_state.user_email.strip().lower()
-        # recarrega a matriz para garantir persistência recente
-        try:
-            df_matriz_utilidade = pd.read_csv("matriz_utilidade.csv", index_col=0)
-            df_matriz_utilidade.index = df_matriz_utilidade.index.to_series().astype(str).str.strip().str.lower()
-            # garante colunas na ordem
-            df_matriz_utilidade = df_matriz_utilidade.reindex(columns=df_jogos['nome_jogo'].tolist(), fill_value=0.0)
-        except Exception:
-            st.error("Erro ao carregar avaliações salvas.")
-            st.stop()
+        for nome, score in recs:
+            st.markdown(f"**{nome}** — relevância: {score:.3f}")
 
-        recomendacoes_top_n = st.slider("Número de recomendações", 1, 10, 5)
-        recomendacoes = get_recommendations(user, df_jogos, df_matriz_utilidade, top_n=recomendacoes_top_n)
 
-        if not recomendacoes:
-            st.info("Não há recomendações — avalie pelo menos 3 jogos e salve as avaliações.")
-        else:
-            for nome, score in recomendacoes:
-                st.markdown(f"**{nome}** — relevância: {score:.3f}")
+def page_recommendations(df_jogos):
+    st.header("Recomendações Personalizadas")
 
-        col1, col2 = st.columns([3,1])
-        with col2:
-            if st.button("Voltar para Avaliações"):
-                st.session_state.page = 'rating'
-                try:
-                    st.rerun()
-                except Exception:
-                    st.info("Atualize a página (F5).")
-                    st.stop()
+    user = _check_user_authenticated()
+    if user is None:
+        return
+
+    try:
+        df_matriz_utilidade = _load_utility_matrix(df_jogos)
+    except Exception:
+        st.error("Erro ao carregar avaliações salvas.")
+        return
+
+    topn = st.slider("Número de recomendações", 1, 10, 5)
+    recs = get_recommendations(user, df_jogos, df_matriz_utilidade, top_n=topn)
+
+    _display_recommendations(recs)
+
+    if st.button("Voltar para Avaliações"):
+        navigate("rating")
+
+
+# ===================== App =====================
+def main():
+    init_state()
+    st.title("Sistema de Recomendação de Jogos")
+
+    # Carrega dados (cacheado)
+    df_jogos, df_matriz_utilidade = load_data()
+
+    # Roteamento sem condicionais gigantes
+    PAGES = {
+        "login": lambda: page_login(df_jogos, df_matriz_utilidade),
+        "rating": lambda: page_rating(df_jogos, df_matriz_utilidade),
+        "recommendations": lambda: page_recommendations(df_jogos),
+    }
+    PAGES.get(st.session_state.page, PAGES["login"])()
+
+
+if __name__ == "__main__":
+    main()
