@@ -1,6 +1,7 @@
 # app.py
 
 import streamlit as st
+import os
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -77,15 +78,77 @@ def clean_email(email):
 # Carregamento de dados
 @st.cache_data
 def load_data():
-    try:
+    """Carrega dados e garante que a matriz de utilidade tenha índices normalizados."""
+    # dados_jogos
+    if os.path.exists("dados_jogos.csv"):
         df_jogos = pd.read_csv("dados_jogos.csv")
-        df_matriz_utilidade = pd.read_csv("matriz_utilidade.csv", index_col=0)
-        st.success("Dados carregados com sucesso!")
-    except Exception as e:
-        st.error(f"Erro ao carregar dados: {str(e)}")
-        df_jogos = pd.DataFrame()
-        df_matriz_utilidade = pd.DataFrame()
-    return df_jogos, df_matriz_utilidade
+    else:
+        raise FileNotFoundError("dados_jogos.csv não encontrado. Gere ou copie o arquivo no diretório do app.")
+
+    # matriz_utilidade
+    if os.path.exists("matriz_utilidade.csv"):
+        df_matriz = pd.read_csv("matriz_utilidade.csv", index_col=0)
+        # normaliza índices (remove espaços, torna lower)
+        df_matriz.index = df_matriz.index.to_series().astype(str).str.strip().str.lower()
+        # se existirem duplicados após strip/lower, mantém avaliação máxima
+        if df_matriz.index.duplicated().any():
+            df_matriz = df_matriz.groupby(df_matriz.index).max()
+        # garante colunas no mesmo order/nome dos jogos (preenche zeros se faltar)
+        jogos = df_jogos['nome_jogo'].tolist()
+        for j in jogos:
+            if j not in df_matriz.columns:
+                df_matriz[j] = 0.0
+        # reindexa colunas na mesma ordem dos jogos
+        df_matriz = df_matriz.reindex(columns=jogos, fill_value=0.0)
+    else:
+        # cria matriz vazia (0 usuários)
+        jogos = df_jogos['nome_jogo'].tolist()
+        df_matriz = pd.DataFrame(columns=jogos)
+        # salva para persistência
+        df_matriz.to_csv("matriz_utilidade.csv")
+
+    return df_jogos, df_matriz
+
+# Funções de recomendação (cacheadas para eficiência)
+@st.cache_data
+def calcular_similaridade_jogos(df_jogos):
+    perfil = df_jogos[['caracteristica_1','caracteristica_2','caracteristica_3','caracteristica_4','caracteristica_5']].fillna('').agg(' '.join, axis=1)
+    tfidf = TfidfVectorizer()
+    matriz_tfidf = tfidf.fit_transform(perfil)
+    sim = cosine_similarity(matriz_tfidf)
+    return sim
+
+def get_recommendations(user_email, df_jogos, df_matriz, top_n=5):
+    """Gera recomendações por conteúdo para user_email (email deve ser normalizado)."""
+    if user_email is None:
+        return []
+    user = str(user_email).strip().lower()
+    if user not in df_matriz.index:
+        return []
+    # pega avaliações > 0 do usuário
+    row = df_matriz.loc[user]
+    user_ratings = {col: int(v) for col, v in row.items() if pd.notnull(v) and float(v) > 0}
+    if not user_ratings:
+        return []
+    sim = calcular_similaridade_jogos(df_jogos)
+    name_to_idx = {name: idx for idx, name in enumerate(df_jogos['nome_jogo'])}
+    scores = np.zeros(len(df_jogos))
+    sim_sums = np.zeros(len(df_jogos))
+    for nome, rating in user_ratings.items():
+        if nome in name_to_idx:
+            i = name_to_idx[nome]
+            sim_col = sim[i]
+            scores += sim_col * rating
+            sim_sums += sim_col
+    with np.errstate(divide='ignore', invalid='ignore'):
+        pred = np.divide(scores, sim_sums)
+        pred[np.isnan(pred)] = 0
+    # bloquear já avaliados
+    for nome in user_ratings:
+        if nome in name_to_idx:
+            pred[name_to_idx[nome]] = -1e9
+    top_idx = np.argsort(-pred)[:top_n]
+    return [(df_jogos.loc[i, 'nome_jogo'], float(pred[i])) for i in top_idx]
 
 # Inicialização do estado
 if 'page' not in st.session_state:
@@ -192,31 +255,60 @@ elif st.session_state.page == 'rating':
         if st.button("Salvar Avaliações"):
             df_matriz_utilidade.to_csv("matriz_utilidade.csv")
             st.success("Avaliações salvas!")
-            
+            # redireciona automaticamente para a página de Recomendações
+            st.session_state.page = 'recommendations'
+            try:
+                st.rerun()
+            except Exception:
+                st.info("Atualize a página (F5) para ver as recomendações.")
+                st.stop()
+
+        # botão visível que leva à página de recomendações sem salvar
+        if st.button("Ver Recomendações"):
+            st.session_state.page = 'recommendations'
+            try:
+                st.rerun()
+            except Exception:
+                st.info("Atualize a página (F5) para ver as recomendações.")
+                st.stop()
+
     except Exception as e:
         st.error(f"Erro ao carregar perfil: {str(e)}")
         st.session_state.page = 'login'
         safe_rerun()
 
-elif st.session_state.page == 'recommendations':
-    # Header com botões de navegação
-    col1, col2 = st.columns([3,1])
-    with col2:
-        st.write(f"Usuário: {st.session_state.user_email}")
-        if st.button("Voltar para Avaliações"):
-            st.session_state.page = 'rating'
-            safe_rerun()
-        if st.button("Logout"):
-            st.session_state.page = 'login'
-            st.session_state.user_email = None
-            st.session_state.user_ratings = {}
-            safe_rerun()
-    
-    st.subheader("Suas Recomendações")
-    
-    recomendacoes = get_recommendations(st.session_state.user_email)
-    if not recomendacoes:
-        st.info("Avalie mais jogos para receber recomendações personalizadas!")
+# Página de Recomendações
+if st.session_state.page == 'recommendations':
+    st.header("Recomendações Personalizadas")
+    if st.session_state.user_email is None:
+        st.warning("Faça login e avalie alguns jogos antes de ver recomendações.")
     else:
-        for nome, score in recomendacoes:
-            st.write(f"- {nome} (Relevância: {score:.2f})")
+        user = st.session_state.user_email.strip().lower()
+        # recarrega a matriz para garantir persistência recente
+        try:
+            df_matriz_utilidade = pd.read_csv("matriz_utilidade.csv", index_col=0)
+            df_matriz_utilidade.index = df_matriz_utilidade.index.to_series().astype(str).str.strip().str.lower()
+            # garante colunas na ordem
+            df_matriz_utilidade = df_matriz_utilidade.reindex(columns=df_jogos['nome_jogo'].tolist(), fill_value=0.0)
+        except Exception:
+            st.error("Erro ao carregar avaliações salvas.")
+            st.stop()
+
+        recomendacoes_top_n = st.slider("Número de recomendações", 1, 10, 5)
+        recomendacoes = get_recommendations(user, df_jogos, df_matriz_utilidade, top_n=recomendacoes_top_n)
+
+        if not recomendacoes:
+            st.info("Não há recomendações — avalie pelo menos 3 jogos e salve as avaliações.")
+        else:
+            for nome, score in recomendacoes:
+                st.markdown(f"**{nome}** — relevância: {score:.3f}")
+
+        col1, col2 = st.columns([3,1])
+        with col2:
+            if st.button("Voltar para Avaliações"):
+                st.session_state.page = 'rating'
+                try:
+                    st.rerun()
+                except Exception:
+                    st.info("Atualize a página (F5).")
+                    st.stop()
