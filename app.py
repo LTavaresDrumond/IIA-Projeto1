@@ -6,161 +6,217 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# --- CARREGAMENTO DOS DADOS (O mesmo que você já tem) ---
-dados_jogos = {
-    'id_jogo': list(range(1, 23)),
-    'nome_jogo': ['FIFA 24', 'Counter-Strike 2', 'League of Legends', 'Elden Ring', 'The Witcher 3', 'Stardew Valley', 'NBA 2K24', 'The Last of Us Part I','Batman: Arkham Asylum', "Marvel's Spider-Man", 'Street Fighter 6', 'Mortal Kombat 1','God of War Ragnarök', "Assassin's Creed Mirage", 'Top Eleven', 'Bomba Patch','Grand Theft Auto V', 'Minecraft', 'Roblox', 'Rocket League', 'Gran Turismo 7', 'Valorant'],
-    'caracteristica_1': [ 'Esportes', 'FPS Tático', 'MOBA', 'RPG de Ação', 'RPG de Ação', 'Simulação', 'Esportes', 'Ação-Aventura','Ação-Aventura', 'Ação-Aventura', 'Luta', 'Luta','Ação-Aventura', 'Ação-Aventura', 'Esportes', 'Esportes','Ação-Aventura', 'Sandbox', 'Plataforma de Criação', 'Esportes','Corrida', 'FPS Tático' ],
-    'caracteristica_2': [ 'Multiplayer Online', 'Multiplayer Online', 'Multiplayer Online', 'Singleplayer', 'Singleplayer', 'Singleplayer', 'Multiplayer Online', 'Singleplayer','Singleplayer', 'Singleplayer', 'Multiplayer Online', 'Multiplayer Online','Singleplayer', 'Singleplayer', 'Multiplayer Online', 'Multiplayer Local','Multiplayer Online', 'Multiplayer Online', 'Multiplayer Online', 'Multiplayer Online','Multiplayer Online', 'Multiplayer Online' ],
-    'caracteristica_3': [ 'Competitivo', 'Competitivo', 'Estratégia', 'Mundo Aberto', 'Narrativa', 'Casual', 'Simulação Realista', 'Narrativa','Stealth', 'Mundo Aberto', 'Competitivo', 'Narrativa','Narrativa', 'Stealth', 'Gerenciamento', 'Modificação','Mundo Aberto', 'Criativo', 'Criativo', 'Arcade','Simulação Realista', 'Competitivo' ],
-    'caracteristica_4': [ 'Futebol', 'Terrorismo', 'Fantasia', 'Fantasia Sombria','Fantasia Medieval', 'Vida Rural', 'Basquete', 'Pós-apocalíptico','Super-Herói', 'Super-Herói', 'Artes Marciais', 'Fantasia Sombria','Mitologia Nórdica', 'Histórico', 'Futebol', 'Futebol','Crime Moderno', 'Sobrevivência', 'User-Generated', 'Veicular','Automobilismo', 'Sci-Fi' ],
-    'caracteristica_5': [ 'Realista', 'Realista', 'Estilizado', 'Realista','Realista', 'Pixel Art', 'Realista', 'Realista','Realista Sombrio', 'Realista', 'Estilizado', 'Realista','Realista', 'Realista', 'Interface 2D', 'Retrô','Realista', 'Voxel', 'Gráfico Simples', 'Cartunesco','Realista', 'Estilizado' ]
-}
-df_jogos = pd.DataFrame(dados_jogos)
+# Configuração da página
+st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="wide")
 
-# --- NOVA FUNÇÃO DE RECOMENDAÇÃO BASEADA EM PERFIL DE CARACTERÍSTICAS ---
-def get_recommendations_from_profile(user_profile, df_jogos):
-    # Função auxiliar para tratar características com espaços (ex: "FPS Tático" -> "fps_tático")
-    def clean_text(text):
-        return text.replace(' ', '_').lower()
+# CSS para melhorar aparência dos botões de estrela
+st.markdown("""
+<style>
+    .stButton > button {
+        background: none;
+        border: none;
+        padding: 0;
+        font-size: 24px;
+        line-height: 1;
+        cursor: pointer;
+    }
+    .stButton > button:hover {
+        color: gold;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    # Prepara uma cópia do DataFrame para não alterar o original
-    df_jogos_cleaned = df_jogos.copy()
+# Adicione este CSS no início do arquivo, após st.set_page_config
+st.markdown("""
+<style>
+    .game-card {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .rating-display {
+        color: gold;
+        font-size: 20px;
+        margin-top: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def rating_stars(key, current_value=0):
+    """Cria 5 botões de estrela para avaliação"""
+    cols = st.columns(5)
+    rating = current_value
     
-    # Limpa todas as características para que o TF-IDF as trate como palavras únicas
-    for col in ['caracteristica_1', 'caracteristica_2', 'caracteristica_3', 'caracteristica_4', 'caracteristica_5']:
-        df_jogos_cleaned[col] = df_jogos_cleaned[col].apply(clean_text)
+    for i in range(5):
+        with cols[i]:
+            # Estrela preenchida se valor atual >= posição+1
+            star = "⭐" if i < rating else "☆"
+            if st.button(star, key=f"{key}_star_{i+1}"):
+                rating = i + 1 if rating != i + 1 else 0
     
-    # Combina as características limpas em um único "documento" por jogo
-    df_jogos_cleaned['perfil_conteudo'] = df_jogos_cleaned.iloc[:, 2:7].agg(' '.join, axis=1)
+    return rating
 
-    # Vetorização com TF-IDF
-    tfidf = TfidfVectorizer()
-    matriz_tfidf_jogos = tfidf.fit_transform(df_jogos_cleaned['perfil_conteudo'])
-    feature_names = tfidf.get_feature_names_out()
-    feature_index_map = {feature: i for i, feature in enumerate(feature_names)}
+# Configuração básica
+st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="wide")
 
-    # Cria o vetor de perfil do usuário com base em suas escolhas
-    perfil_usuario_vector = np.zeros(len(feature_names))
-
-    # Atribui pesos positivos para características que o usuário gosta
-    for char in user_profile.get('gosta', []):
-        if clean_text(char) in feature_index_map:
-            perfil_usuario_vector[feature_index_map[clean_text(char)]] = 5.0
-    
-    # Atribui pesos moderados para características que o usuário acha OK
-    for char in user_profile.get('ok', []):
-        if clean_text(char) in feature_index_map:
-            perfil_usuario_vector[feature_index_map[clean_text(char)]] = 3.0
-
-    # Atribui pesos NEGATIVOS para características que o usuário não gosta
-    for char in user_profile.get('nao_gosta', []):
-        if clean_text(char) in feature_index_map:
-            perfil_usuario_vector[feature_index_map[clean_text(char)]] = -5.0
-
-    # Calcula a similaridade entre o perfil do usuário e todos os jogos
-    similaridades = cosine_similarity(perfil_usuario_vector.reshape(1, -1), matriz_tfidf_jogos)
-    
-    # Cria e retorna o DataFrame de recomendações
-    df_recomendacoes = pd.DataFrame({
-        'nome_jogo': df_jogos['nome_jogo'],
-        'score': similaridades.flatten()
-    }).sort_values(by='score', ascending=False)
-    
-    return df_recomendacoes
-
-# --- LÓGICA DA INTERFACE ---
-
-st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="centered")
-st.title('🎮 Sistema de Recomendação de Jogos')
-
-# Inicializa o estado da sessão para controlar as telas
-if 'screen' not in st.session_state:
-    st.session_state.screen = 'cadastro'
-if 'profile' not in st.session_state:
-    st.session_state.profile = {}
-
-# --- TELA 1: CADASTRO ---
-if st.session_state.screen == 'cadastro':
-    st.header('Bem-vindo(a)!')
-    nome_usuario = st.text_input('Para começar, por favor, insira seu nome:')
-    
-    if st.button('Próximo'):
-        if nome_usuario:
-            st.session_state.nome_usuario = nome_usuario
-            st.session_state.screen = 'avaliacao'
-            st.rerun()
-        else:
-            st.warning('Por favor, insira um nome para continuar.')
-
-# --- TELA 2: CRIAÇÃO DE PERFIL POR CARACTERÍSTICAS (MODIFICADA) ---
-elif st.session_state.screen == 'avaliacao':
-    st.header(f'Olá, {st.session_state.nome_usuario}!')
-    st.write('Para criar seu perfil, por favor, selecione as características que mais te atraem em um jogo.')
-
-    # Pega todas as características únicas de todas as colunas
-    caracteristicas_todas = set()
-    for col in ['caracteristica_1', 'caracteristica_2', 'caracteristica_3', 'caracteristica_4', 'caracteristica_5']:
-        caracteristicas_todas.update(df_jogos[col].unique())
-    lista_caracteristicas = sorted(list(caracteristicas_todas))
-
-    # Seleção de características que o usuário GOSTA
-    gosta = st.multiselect(
-        'Escolha 3 características que você **ADORA** em jogos:',
-        lista_caracteristicas,
-        max_selections=3,
-        key='gosta_multiselect'
-    )
-    
-    # Filtra as opções para não repetir
-    opcoes_ok = [c for c in lista_caracteristicas if c not in gosta]
-    ok = st.multiselect(
-        'Escolha 3 características que você acha **OK**:',
-        opcoes_ok,
-        max_selections=3,
-        key='ok_multiselect'
-    )
-
-    # Filtra as opções novamente
-    opcoes_nao_gosta = [c for c in opcoes_ok if c not in ok]
-    nao_gosta = st.multiselect(
-        'Escolha 2 características que você **NÃO GOSTA** em jogos:',
-        opcoes_nao_gosta,
-        max_selections=2,
-        key='nao_gosta_multiselect'
-    )
-        
-    if st.button('Ver Recomendações'):
-        # Validação para garantir que o usuário preencheu tudo
-        if len(gosta) == 3 and len(ok) == 3 and len(nao_gosta) == 2:
-            st.session_state.profile = {'gosta': gosta, 'ok': ok, 'nao_gosta': nao_gosta}
-            st.session_state.screen = 'recomendacao'
-            st.rerun()
-        else:
-            st.error('Por favor, selecione a quantidade exata de características em cada categoria (3, 3 e 2).')
-
-
-# --- TELA 3: EXIBIÇÃO DAS RECOMENDAÇÕES ---
-elif st.session_state.screen == 'recomendacao':
-    st.header(f'Aqui estão suas recomendações, {st.session_state.nome_usuario}:')
-
-    recomendacoes = get_recommendations_from_profile(st.session_state.profile, df_jogos)
-
-    if recomendacoes.empty or recomendacoes['score'].max() <= 0:
-        st.warning("Não foi possível gerar recomendações com base no seu perfil. Tente uma combinação diferente.")
-    else:
-        st.write("Com base no seu perfil, você provavelmente vai gostar destes jogos:")
-        for index, row in recomendacoes.head(5).iterrows():
-            st.subheader(f"{row['nome_jogo']}")
-            st.write(f"_(Score de similaridade: {row['score']:.2f})_")
-            caracteristicas = df_jogos[df_jogos['nome_jogo'] == row['nome_jogo']].iloc[0]
-            st.info(f"**Gênero:** {caracteristicas['caracteristica_1']} | **Tema:** {caracteristicas['caracteristica_4']} | **Estilo Visual:** {caracteristicas['caracteristica_5']}")
-
-    if st.button('Criar Novo Perfil'):
-        # Limpa o estado da sessão para recomeçar
-        keys_to_keep = ['nome_usuario'] # Mantém o nome do usuário
-        for key in list(st.session_state.keys()):
-            if key not in keys_to_keep:
-                del st.session_state[key]
-        st.session_state.screen = 'avaliacao' # Volta para a tela de avaliação
+# Funções auxiliares
+def safe_rerun():
+    """Tenta recarregar a página de forma segura"""
+    try:
         st.rerun()
+    except:
+        st.info("Por favor, atualize a página (F5)")
+        st.stop()
+
+def clean_email(email):
+    """Limpa e normaliza o email"""
+    return email.strip().lower() if email else ""
+
+# Carregamento de dados
+@st.cache_data
+def load_data():
+    try:
+        df_jogos = pd.read_csv("dados_jogos.csv")
+        df_matriz_utilidade = pd.read_csv("matriz_utilidade.csv", index_col=0)
+        st.success("Dados carregados com sucesso!")
+    except Exception as e:
+        st.error(f"Erro ao carregar dados: {str(e)}")
+        df_jogos = pd.DataFrame()
+        df_matriz_utilidade = pd.DataFrame()
+    return df_jogos, df_matriz_utilidade
+
+# Inicialização do estado
+if 'page' not in st.session_state:
+    st.session_state.page = 'login'
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
+if 'user_ratings' not in st.session_state:
+    st.session_state.user_ratings = {}
+
+# Carrega dados
+df_jogos, df_matriz_utilidade = load_data()
+
+# Interface principal
+st.title("Sistema de Recomendação de Jogos")
+
+# Página de login
+if st.session_state.page == 'login':
+    with st.form("login_form"):
+        st.subheader("Login")
+        email = st.text_input("E-mail")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        
+        if submitted:
+            if not email.strip():
+                st.error("Digite um e-mail válido")
+            else:
+                try:
+                    clean_user_email = clean_email(email)
+                    st.session_state.user_email = clean_user_email
+                    st.session_state.page = 'rating'
+                    
+                    # Verifica/cria usuário na matriz
+                    if clean_user_email not in df_matriz_utilidade.index:
+                        nova_linha = pd.Series(0, index=df_jogos['nome_jogo'], name=clean_user_email)
+                        df_matriz_utilidade = pd.concat([df_matriz_utilidade, nova_linha.to_frame().T])
+                        df_matriz_utilidade.to_csv("matriz_utilidade.csv")
+                        st.success("Novo usuário criado!")
+                    
+                    safe_rerun()
+                except Exception as e:
+                    st.error(f"Erro no login: {str(e)}")
+                    st.session_state.page = 'login'
+                    st.session_state.user_email = None
+    
+    st.info("Digite e-mail e senha para criar uma conta (protótipo)")
+
+elif st.session_state.page == 'rating':
+    try:
+        # Header com logout
+        col1, col2 = st.columns([3,1])
+        with col2:
+            st.write(f"Usuário: {st.session_state.user_email}")
+            if st.button("Logout"):
+                st.session_state.page = 'login'
+                st.session_state.user_email = None
+                st.session_state.user_ratings = {}
+                safe_rerun()
+        
+        st.subheader("Avalie os Jogos")
+        
+        # Grid de cards (3 por linha)
+        cols = st.columns(3)
+        for i, row in df_jogos.iterrows():
+            with cols[i % 3]:
+                with st.container():
+                    st.markdown('<div class="game-card">', unsafe_allow_html=True)
+                    
+                    # Imagem e informações do jogo
+                    # st.image("https://placehold.in/200@2x", use_container_width=True)
+                    st.markdown(f"**{row['nome_jogo']}**")
+                    st.caption(f"{row['caracteristica_1']} | {row['caracteristica_2']}")
+                    
+                    # Slider de avaliação
+                    try:
+                        current_rating = df_matriz_utilidade.loc[st.session_state.user_email, row['nome_jogo']]
+                        current_rating = int(current_rating) if pd.notnull(current_rating) else 0
+                    except (KeyError, ValueError):
+                        current_rating = 0
+                    
+                    rating = st.slider(
+                        "Avaliação",
+                        min_value=0,
+                        max_value=5,
+                        value=current_rating,
+                        key=f"rating_{i}"
+                    )
+                    
+                    # Exibe estrelas baseado na avaliação
+                    if rating > 0:
+                        st.markdown(
+                            f'<div class="rating-display">{"★" * rating}{"☆" * (5-rating)}</div>',
+                            unsafe_allow_html=True
+                        )
+                        st.session_state.user_ratings[row['nome_jogo']] = rating
+                        df_matriz_utilidade.loc[st.session_state.user_email, row['nome_jogo']] = rating
+                    else:
+                        st.write("Sem avaliação")
+                        st.session_state.user_ratings.pop(row['nome_jogo'], None)
+                        df_matriz_utilidade.loc[st.session_state.user_email, row['nome_jogo']] = 0
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+        
+        if st.button("Salvar Avaliações"):
+            df_matriz_utilidade.to_csv("matriz_utilidade.csv")
+            st.success("Avaliações salvas!")
+            
+    except Exception as e:
+        st.error(f"Erro ao carregar perfil: {str(e)}")
+        st.session_state.page = 'login'
+        safe_rerun()
+
+elif st.session_state.page == 'recommendations':
+    # Header com botões de navegação
+    col1, col2 = st.columns([3,1])
+    with col2:
+        st.write(f"Usuário: {st.session_state.user_email}")
+        if st.button("Voltar para Avaliações"):
+            st.session_state.page = 'rating'
+            safe_rerun()
+        if st.button("Logout"):
+            st.session_state.page = 'login'
+            st.session_state.user_email = None
+            st.session_state.user_ratings = {}
+            safe_rerun()
+    
+    st.subheader("Suas Recomendações")
+    
+    recomendacoes = get_recommendations(st.session_state.user_email)
+    if not recomendacoes:
+        st.info("Avalie mais jogos para receber recomendações personalizadas!")
+    else:
+        for nome, score in recomendacoes:
+            st.write(f"- {nome} (Relevância: {score:.2f})")
