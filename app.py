@@ -7,6 +7,21 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+@st.cache_data
+def build_tfidf_for_games(df_jogos):
+    docs = df_jogos[['caracteristica_1','caracteristica_2','caracteristica_3','caracteristica_4','caracteristica_5']].fillna('').agg(' '.join, axis=1).tolist()
+    vec = TfidfVectorizer()
+    X = vec.fit_transform(docs)
+    return vec, X
+
+def recommend_by_text(query: str, df_jogos, vec, X, top_n=5):
+    if not query or query.strip() == "":
+        return []
+    qv = vec.transform([query])
+    sims = cosine_similarity(qv, X).flatten()
+    idx = sims.argsort()[::-1][:top_n]
+    return [(df_jogos.loc[i, 'nome_jogo'], float(sims[i])) for i in idx]
+
 # Configuração da página
 st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="wide")
 
@@ -302,6 +317,43 @@ if st.session_state.page == 'recommendations':
         else:
             for nome, score in recomendacoes:
                 st.markdown(f"**{nome}** — relevância: {score:.3f}")
+
+        # campo de busca textual
+        query = st.text_input("O que você está procurando? (ex.: 'mundo aberto fantasia narrativa')")
+        col1, col2 = st.columns([3,1])
+        with col2:
+            search_btn = st.button("Buscar por Texto")
+        # prepara tfidf se necessário
+        vec, X = build_tfidf_for_games(df_jogos)
+        if search_btn and query.strip():
+            results = recommend_by_text(query, df_jogos, vec, X, top_n=10)
+            if not results:
+                st.info("Nenhum resultado para a consulta.")
+            else:
+                st.subheader("Resultados da busca por texto")
+                for nome, score in results:
+                    st.markdown(f"**{nome}** — similaridade: {score:.3f}")
+
+        # opcional: combinar com recomendações por perfil (se quiser)
+        combine = st.checkbox("Combinar com meu perfil (hybrid)", value=False)
+        if combine:
+            perfil_rec = get_recommendations(st.session_state.user_email, df_jogos, df_matriz_utilidade, top_n=10)
+            # transforma em dicionário nome->score
+            perfil_scores = {n: s for n, s in perfil_rec}
+            # se query vazia, só mostra perfil; se tiver query, faz combinação simples
+            if query.strip():
+                text_results = dict(recommend_by_text(query, df_jogos, vec, X, top_n=len(df_jogos)))
+                alpha = 0.6  # peso para texto
+                combined = {}
+                for i, row in df_jogos.iterrows():
+                    name = row['nome_jogo']
+                    s_text = text_results.get(name, 0.0)
+                    s_perfil = perfil_scores.get(name, 0.0)
+                    combined[name] = alpha * s_text + (1-alpha) * s_perfil
+                top = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:10]
+                st.subheader("Resultados combinados (texto + perfil)")
+                for nome, score in top:
+                    st.markdown(f"**{nome}** — score combinado: {score:.3f}")
 
         col1, col2 = st.columns([3,1])
         with col2:
