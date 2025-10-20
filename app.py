@@ -4,20 +4,18 @@ import streamlit as st
 import os
 import pandas as pd
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-import nltk
-from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 from sklearn.metrics.pairwise import cosine_similarity
+import time
+from typing import List, Tuple, Dict
 from pathlib import Path
 
-# tenta baixar stopwords se necessário (uma vez)
-try:
-    _ = stopwords.words('portuguese')
-except Exception:
-    try:
-        nltk.download('stopwords')
-    except Exception:
-        pass
+PT_STOPWORDS = {
+    'a','ao','aos','à','às','o','os','um','uma','uns','umas','de','do','da','dos','das',
+    'em','no','na','nos','nas','por','para','com','sem','e','é','ou','que','como','se',
+    'são','mais','mas','foi','ser','tem','há','pelo','pela','pelos','pelas','dos','do','da','até'
+}
+DEFAULT_STOPWORDS = list(set(ENGLISH_STOP_WORDS).union(PT_STOPWORDS))
 
 def build_weighted_documents(df_jogos, weight_map=None):
     """
@@ -42,32 +40,17 @@ def build_weighted_documents(df_jogos, weight_map=None):
 @st.cache_data
 def build_tfidf_for_games(df_jogos, ngram_range=(1,2), min_df=1, sublinear_tf=True, weight_map=None, stop_words=None):
     """
-    Constrói TfidfVectorizer com opções mais robustas e documentos ponderados.
-    - ngram_range: (1,1) ou (1,2)
-    - weight_map: repeats por campo para aumentar influência
-    - stop_words: lista ou 'english'/'portuguese' ou None
+    Constrói vetorizador TF-IDF para os jogos.
+    Retorna: (vectorizer, X_tfidf)
     """
-    # default stopwords: combina pt + en se None
     if stop_words is None:
-        sw_pt = []
-        sw_en = []
-        try:
-            sw_pt = stopwords.words('portuguese')
-        except Exception:
-            sw_pt = []
-        try:
-            sw_en = stopwords.words('english')
-        except Exception:
-            sw_en = []
-        combined = list(dict.fromkeys(sw_pt + sw_en))  # mantém ordem e remove duplicatas
-        stop_words = combined if combined else None
-
+        stop_words = DEFAULT_STOPWORDS  # list, compatível com sklearn
     docs = build_weighted_documents(df_jogos, weight_map=weight_map)
     vec = TfidfVectorizer(ngram_range=ngram_range, min_df=min_df, sublinear_tf=sublinear_tf, stop_words=stop_words)
     X = vec.fit_transform(docs)
     return vec, X
 
-def recommend_by_text(query: str, df_jogos, vec, X, top_n=5):
+def recommend_by_text(query: str, df_jogos=None, vec=None, X=None, top_n=5):
     """mantém compatibilidade — aceita query, devolve top_n (nome, score)."""
     if not query or query.strip() == "":
         return []
@@ -75,6 +58,106 @@ def recommend_by_text(query: str, df_jogos, vec, X, top_n=5):
     sims = cosine_similarity(qv, X).flatten()
     idx = sims.argsort()[::-1][:top_n]
     return [(df_jogos.loc[i, 'nome_jogo'], float(sims[i])) for i in idx]
+
+def recommend_for_user_from_train(user: str, df_jogos: pd.DataFrame, train_df: pd.DataFrame, X, top_n: int = 10) -> List[str]:
+    """Gera top-N recomendações por conteúdo dado X (TF-IDF) e train_df com avaliações persistidas."""
+    if user not in train_df.index:
+        return []
+    row = train_df.loc[user]
+    user_ratings = {col: int(v) for col, v in row.items() if pd.notnull(v) and float(v) > 0}
+    if not user_ratings:
+        return []
+    name_to_idx = {name: idx for idx, name in enumerate(df_jogos['nome_jogo'])}
+    sim = cosine_similarity(X)
+    scores = np.zeros(len(df_jogos))
+    sim_sums = np.zeros(len(df_jogos))
+    for nome, rating in user_ratings.items():
+        if nome in name_to_idx:
+            i = name_to_idx[nome]
+            sim_col = sim[i]
+            scores += sim_col * rating
+            sim_sums += sim_col
+    with np.errstate(divide='ignore', invalid='ignore'):
+        pred = np.divide(scores, sim_sums)
+        pred[np.isnan(pred)] = 0
+    for nome in user_ratings:
+        if nome in name_to_idx:
+            pred[name_to_idx[nome]] = -1e9
+    top_idx = np.argsort(-pred)[:top_n]
+    return [df_jogos.loc[i, 'nome_jogo'] for i in top_idx]
+
+def precision_at_k(recommended: List[str], ground_truth: set, k: int) -> float:
+    if not recommended:
+        return 0.0
+    recommended_k = recommended[:k]
+    hits = sum(1 for r in recommended_k if r in ground_truth)
+    return hits / k
+
+def recall_at_k(recommended: List[str], ground_truth: set, k: int) -> float:
+    if not ground_truth:
+        return 0.0
+    recommended_k = recommended[:k]
+    hits = sum(1 for r in recommended_k if r in ground_truth)
+    return hits / len(ground_truth)
+
+def apk(recommended: List[str], ground_truth: set, k: int) -> float:
+    if not ground_truth:
+        return 0.0
+    hits = 0
+    score = 0.0
+    for i, r in enumerate(recommended[:k], start=1):
+        if r in ground_truth:
+            hits += 1
+            score += hits / i
+    return score / min(len(ground_truth), k)
+
+def evaluate_offline_streamlit(df_jogos: pd.DataFrame, df_matriz: pd.DataFrame,
+                               ngram_range=(1,2), min_df=1, weight_map=None,
+                               min_ratings=5, n_test=1, top_k=10, sample_users: int = 0) -> Dict[str, float]:
+    """
+    Executa avaliação leave-one-out (n_test por usuário) e retorna métricas agregadas.
+    sample_users: 0 = usar todos; >0 = tamanho da amostra aleatória de usuários elegíveis.
+    """
+    # prepara dados
+    jogos = df_jogos['nome_jogo'].tolist()
+    df_matriz = df_matriz.reindex(columns=jogos, fill_value=0.0)
+    user_counts = (df_matriz > 0).sum(axis=1)
+    users = user_counts[user_counts >= min_ratings].index.tolist()
+    if sample_users and sample_users < len(users):
+        np.random.seed(42)
+        users = list(np.random.choice(users, sample_users, replace=False))
+    if not users:
+        return {"precision": 0.0, "recall": 0.0, "map": 0.0, "n_users": 0}
+
+    # TF-IDF com os parâmetros escolhidos
+    vec, X = build_tfidf_for_games(df_jogos, ngram_range=ngram_range, min_df=min_df, weight_map=weight_map)
+
+    precisions, recalls, apks = [], [], []
+    total = len(users)
+    progress = 0
+    start = time.time()
+    for u in users:
+        # selecciona itens e faz holdout
+        items = df_matriz.columns[(df_matriz.loc[u] > 0).values].tolist()
+        if len(items) <= n_test:
+            continue
+        test_items = list(np.random.choice(items, n_test, replace=False))
+        train_df = df_matriz.copy()
+        for t in test_items:
+            train_df.at[u, t] = 0.0
+        recs = recommend_for_user_from_train(u, df_jogos, train_df, X, top_n=top_k)
+        precisions.append(precision_at_k(recs, set(test_items), top_k))
+        recalls.append(recall_at_k(recs, set(test_items), top_k))
+        apks.append(apk(recs, set(test_items), top_k))
+        progress += 1
+    elapsed = time.time() - start
+    return {
+        "precision": float(np.mean(precisions)) if precisions else 0.0,
+        "recall": float(np.mean(recalls)) if recalls else 0.0,
+        "map": float(np.mean(apks)) if apks else 0.0,
+        "n_users": progress,
+        "time_sec": elapsed
+    }
 
 # Configuração da página
 st.set_page_config(page_title="Sistema de Recomendação de Jogos", layout="wide")
@@ -426,3 +509,16 @@ if st.session_state.page == 'search_recombine':
     st.write("Resultados combinados:")
     for nome, score in top:
         st.markdown(f"**{nome}** — score combinado: {score:.4f}")
+
+# python -c "exec(open('tools/check_matriz.py').read())"  # se você criou o script
+import pandas as pd
+df = pd.read_csv("matriz_utilidade.csv", index_col=0)
+dj = pd.read_csv("dados_jogos.csv")
+print("Exemplo de índices:", list(df.index[:10]))
+print("Índices com espaços (prefix/sufix)?", df.index.to_series().astype(str).str.contains(r'^\s|\s$').any())
+print("Índices com maiúsculas?", df.index.to_series().astype(str).str.match(r'.*[A-Z].*').any())
+print("Duplicatas no índice:", df.index.duplicated().sum())
+expected = set(dj['nome_jogo'].tolist()); cols = set(df.columns.tolist())
+print("Colunas faltando:", expected - cols)
+print("Colunas extras:", cols - expected)
+print("Existem NaNs?", df.isna().any().any())
