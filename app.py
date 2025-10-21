@@ -250,6 +250,18 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+    /* Increase page width */
+    .main .block-container {
+        max-width: 1400px !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+    
+    /* Override Streamlit's emotion cache width constraint */
+    .st-emotion-cache-1w723zb {
+        max-width: 1400px !important;
+    }
+
     /* Title styling */
     .main h1 {
         text-align: center;
@@ -299,66 +311,185 @@ st.markdown(
         border: none !important;
     }
 
-    /* Game card styling - apply to containers in columns */
-    [data-testid="column"] > div > div > div[data-testid="stVerticalBlock"] {
-        background-color: #ffffff;
-        border-radius: 15px;
-        padding: 20px;
-        margin: 10px;
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-        height: 680px;
-        display: flex;
-        flex-direction: column;
-        transition: transform 0.2s, box-shadow 0.2s;
+    /* FORCE ALL COLUMNS TO BE SAME WIDTH - NO GAP */
+    [data-testid="column"] {
+        width: 33.333% !important;
+        min-width: 33.333% !important;
+        max-width: 33.333% !important;
+        flex: 0 0 33.333% !important;
     }
 
-    [data-testid="column"] > div > div > div[data-testid="stVerticalBlock"]:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-    }
-
-    /* Fixed image container and size */
-    [data-testid="stImage"] {
-        width: 100%;
-        height: 352px;
-        overflow: hidden;
-        border-radius: 10px;
-        margin-bottom: 15px;
-        flex-shrink: 0;
-    }
-    
-    [data-testid="stImage"] img {
+    /* Game card styling - apply to the wrapper inside columns */
+    [data-testid="column"] [data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] {
+        background: linear-gradient(145deg, #ffffff, #f8f9fa) !important;
+        border: 2px solid #e0e0e0 !important;
+        border-radius: 20px !important;
+        padding: 25px !important;
+        margin: 15px 15px !important;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12) !important;
+        height: 750px !important;
+        min-height: 750px !important;
+        max-height: 750px !important;
         width: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        transition: all 0.3s ease !important;
+        position: relative !important;
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+    }
+
+    [data-testid="column"] [data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]::before {
+        content: '' !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        height: 4px !important;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%) !important;
+        border-radius: 20px 20px 0 0 !important;
+        z-index: 1 !important;
+    }
+
+    [data-testid="column"] [data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:hover {
+        transform: translateY(-8px) !important;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18) !important;
+        border-color: #667eea !important;
+    }
+
+    /* FORCE IMAGE CONTAINER TO EXACT RECTANGULAR SIZE */
+    [data-testid="column"] [data-testid="stImage"] {
+        width: 264px !important;
         height: 352px !important;
-        object-fit: cover !important;
+        min-width: 264px !important;
+        max-width: 264px !important;
+        min-height: 352px !important;
+        max-height: 352px !important;
+        overflow: hidden !important;
+        border-radius: 12px !important;
+        margin: 0 auto 15px auto !important;
+        flex: 0 0 352px !important;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+        border: 1px solid #e0e0e0 !important;
+        box-sizing: border-box !important;
+        position: relative !important;
         display: block !important;
     }
-
-    /* Game title styling */
-    [data-testid="stVerticalBlock"] > div > div > p > strong {
-        font-size: 18px;
-        color: #1a1a2e;
-        display: block;
-        margin-bottom: 8px;
+    
+    /* Force all children containers to exact size */
+    [data-testid="column"] [data-testid="stImage"] > div,
+    [data-testid="column"] [data-testid="stImage"] [data-testid="stImageContainer"] {
+        width: 264px !important;
+        height: 352px !important;
+        min-width: 264px !important;
+        max-width: 264px !important;
+        min-height: 352px !important;
+        max-height: 352px !important;
+        position: relative !important;
+        overflow: hidden !important;
+        display: block !important;
+    }
+    
+    /* FORCE IMAGE TO FILL CONTAINER AND CROP WITH OBJECT-FIT */
+    [data-testid="column"] [data-testid="stImage"] img {
+        width: 100% !important;
+        height: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        min-height: 100% !important;
+        max-height: 100% !important;
+        object-fit: cover !important;
+        object-position: center center !important;
+        display: block !important;
+        transition: transform 0.3s ease !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    
+    /* Override any inline styles from Streamlit */
+    [data-testid="column"] [data-testid="stImage"] img[style] {
+        width: 264px !important;
+        height: 352px !important;
     }
 
-    /* Caption styling */
-    [data-testid="stVerticalBlock"] .stCaption {
-        margin-bottom: 15px;
-        flex-shrink: 0;
+    [data-testid="column"] [data-testid="stVerticalBlock"]:hover [data-testid="stImage"] img {
+        transform: scale(1.05) !important;
     }
 
-    /* Slider container */
-    [data-testid="stVerticalBlock"] .stSlider {
-        margin-top: auto;
-        padding-top: 10px;
+    /* FORCE TITLE TO EXACT HEIGHT */
+    [data-testid="column"] [data-testid="stMarkdownContainer"] strong {
+        font-size: 18px !important;
+        font-weight: 700 !important;
+        color: #1a1a2e !important;
+        display: block !important;
+        margin-bottom: 8px !important;
+        text-align: center !important;
+        letter-spacing: 0.3px !important;
+        line-height: 1.3 !important;
+        height: 50px !important;
+        min-height: 50px !important;
+        max-height: 50px !important;
+        overflow: hidden !important;
+        flex: 0 0 50px !important;
     }
 
-    /* Rating display */
+    /* FORCE CAPTION TO EXACT HEIGHT */
+    [data-testid="column"] [data-testid="stCaptionContainer"] {
+        margin-bottom: 15px !important;
+        text-align: center !important;
+        color: #666 !important;
+        font-size: 13px !important;
+        padding-bottom: 10px !important;
+        border-bottom: 1px solid #ececec !important;
+        height: 40px !important;
+        min-height: 40px !important;
+        max-height: 40px !important;
+        overflow: hidden !important;
+        flex: 0 0 40px !important;
+    }
+
+    /* FORCE SLIDER TO FIXED SPACE */
+    [data-testid="column"] .stSlider {
+        margin-top: auto !important;
+        padding-top: 10px !important;
+        height: 80px !important;
+        min-height: 80px !important;
+        max-height: 80px !important;
+        flex: 0 0 80px !important;
+    }
+
+    /* Slider label */
+    [data-testid="column"] .stSlider label {
+        font-weight: 600 !important;
+        color: #555 !important;
+        font-size: 14px !important;
+    }
+
+    /* FORCE RATING DISPLAY TO EXACT HEIGHT */
     .rating-display {
-        color: gold;
-        font-size: 20px;
-        margin-top: 5px;
+        color: #ffd700 !important;
+        font-size: 22px !important;
+        margin-top: 5px !important;
+        text-align: center !important;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        height: 35px !important;
+        min-height: 35px !important;
+        max-height: 35px !important;
+        flex: 0 0 35px !important;
+        line-height: 35px !important;
+    }
+    
+    /* FORCE "SEM AVALIAÇÃO" TO EXACT HEIGHT */
+    [data-testid="column"] p:not(:has(strong)):not([class]) {
+        text-align: center !important;
+        color: #999 !important;
+        font-size: 14px !important;
+        margin-top: 5px !important;
+        height: 35px !important;
+        min-height: 35px !important;
+        max-height: 35px !important;
+        flex: 0 0 35px !important;
+        line-height: 35px !important;
     }
 </style>
 """,
@@ -680,10 +811,10 @@ if st.session_state.page == "login":
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             login_clicked = st.button(
-                "Entrar", type="primary", use_container_width=True
+                "Entrar", type="primary", width="stretch"
             )
         with col_btn2:
-            register_clicked = st.button("Registrar", use_container_width=True)
+            register_clicked = st.button("Registrar", width="stretch")
 
         # Handle Enter key - check if both fields are filled
         if email and password and not login_clicked and not register_clicked:
@@ -732,10 +863,10 @@ elif st.session_state.page == "register":
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             register_submit = st.button(
-                "Criar Conta", type="primary", use_container_width=True
+                "Criar Conta", type="primary", width="stretch"
             )
         with col_btn2:
-            back_to_login = st.button("Voltar ao Login", use_container_width=True)
+            back_to_login = st.button("Voltar ao Login", width="stretch")
 
         # Handle Enter key for registration
         if (
@@ -809,9 +940,13 @@ elif st.session_state.page == "rating":
             with cols[i % 3]:
                 # Usa st.container() que aplica o CSS do .game-card através de classes Streamlit
                 with st.container():
-                    # Imagem e informações do jogo
+                    # Imagem e informações do jogo - wrapped in fixed-size div for cropping
                     game_image_url = get_game_image(row["nome_jogo"])
-                    st.image(game_image_url, use_container_width=True)
+                    st.markdown(f"""
+                        <div style="width: 264px; height: 352px; overflow: hidden; margin: 0 auto 15px auto; border-radius: 12px; border: 3px solid #e0e0e0; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                            <img src="{game_image_url}" style="width: 100%; height: 100%; object-fit: cover; object-position: center; display: block;">
+                        </div>
+                    """, unsafe_allow_html=True)
                     st.markdown(f"**{row['nome_jogo']}**")
                     st.caption(f"{row['caracteristica_1']} | {row['caracteristica_2']}")
 
