@@ -1,10 +1,14 @@
 # app.py
 
 import time
+import itertools
+import io
+import datetime
 from pathlib import Path
 from typing import Dict, List
 from urllib.parse import quote
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import requests
@@ -58,6 +62,16 @@ PT_STOPWORDS = {
     "até",
 }
 DEFAULT_STOPWORDS = list(set(ENGLISH_STOP_WORDS).union(PT_STOPWORDS))
+
+# define caminho base do projeto (relativo ao arquivo app.py)
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR  # use BASE_DIR / "data" se preferir subpasta
+
+# pasta para salvar resultados (usa DATA_DIR se definido)
+RESULTS_DIR = Path(DATA_DIR) if "DATA_DIR" in globals() else Path(__file__).resolve().parent
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+GRID_CSV = RESULTS_DIR / "evaluation_grid_results.csv"
+SINGLE_CSV = RESULTS_DIR / "evaluation_last_run.csv"
 
 
 def build_weighted_documents(df_jogos, weight_map=None):
@@ -239,6 +253,55 @@ def evaluate_offline_streamlit(
         "n_users": progress,
         "time_sec": elapsed,
     }
+
+
+def save_metrics_row(params: dict, metrics: dict, path: Path):
+    row = {**params, **metrics}
+    row["timestamp"] = datetime.datetime.utcnow().isoformat()
+    df_row = pd.DataFrame([row])
+    if path.exists():
+        df_row.to_csv(path, mode="a", header=False, index=False)
+    else:
+        df_row.to_csv(path, index=False)
+
+
+def run_grid_search(
+    df_jogos,
+    df_matriz,
+    ngram_options,
+    min_df_options,
+    weight_maps,
+    min_ratings,
+    n_test,
+    top_k,
+    sample_users,
+):
+    results = []
+    total = len(ngram_options) * len(min_df_options) * len(weight_maps)
+    i = 0
+    for ngram in ngram_options:
+        for min_df in min_df_options:
+            for wmap in weight_maps:
+                i += 1
+                params = {
+                    "ngram_range": f"{ngram[0]}-{ngram[1]}",
+                    "min_df": int(min_df),
+                    "weight_map": str(wmap),
+                }
+                metrics = evaluate_offline_streamlit(
+                    df_jogos,
+                    df_matriz,
+                    ngram_range=ngram,
+                    min_df=int(min_df),
+                    weight_map=wmap,
+                    min_ratings=min_ratings,
+                    n_test=n_test,
+                    top_k=top_k,
+                    sample_users=sample_users,
+                )
+                results.append({**params, **metrics})
+    df_res = pd.DataFrame(results)
+    return df_res
 
 
 # Configuração da página
@@ -1082,37 +1145,256 @@ if st.session_state.page == "recommendations":
             except Exception:
                 st.info("Atualize a página (F5).")
                 st.stop()
-# Página de Busca e Recomposição
-if st.session_state.page == "search_recombine":
-    st.header("Busca por Texto e Recomposição")
-    query = st.text_input("O que você procura?", value="")
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        alpha = st.slider("Peso do texto (alpha)", 0.0, 1.0, 0.6, 0.05)
 
-    # gera scores por texto e por perfil
-    vec, X = build_tfidf_for_games(df_jogos)  # já existente
-    scores_text = {}
-    if query.strip():
-        text_results = recommend_by_text(query, df_jogos, vec, X, top_n=len(df_jogos))
-        scores_text = {n: s for n, s in text_results}
+    st.write("---")
+    st.subheader("Grid‑Search e Salvamento de Resultados")
 
-    scores_profile = {}
-    profile_results = get_recommendations(
-        st.session_state.user_email, df_jogos, df_matriz_utilidade, top_n=len(df_jogos)
+    with st.expander("Grid‑Search TF‑IDF (rodar várias configurações)", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            # ngramas (opções rápidas)
+            ngram_choice = st.multiselect(
+                "n‑gram options (selecione pares)", options=["1,1", "1,2"], default=["1,2"]
+            )
+            ngram_options = [
+                (int(s.split(",")[0]), int(s.split(",")[1])) for s in ngram_choice
+            ]
+            min_df_list = st.multiselect(
+                "min_df options", options=[1, 2, 3, 5], default=[1, 2]
+            )
+        with col2:
+            # weight_map presets (usuário pode editar)
+            preset = st.selectbox(
+                "Preset weight_map", options=["gênero+tag (2,2)", "gênero(2)", "sem peso extra"], index=0
+            )
+            if preset == "gênero+tag (2,2)":
+                weight_maps = [
+                    {"caracteristica_1": 2, "caracteristica_3": 2},
+                    {"caracteristica_1": 3, "caracteristica_3": 1},
+                ]
+            elif preset == "gênero(2)":
+                weight_maps = [{"caracteristica_1": 2}, {"caracteristica_1": 3}]
+            else:
+                weight_maps = [{}]
+            min_ratings_g = st.number_input(
+                "min_ratings (usuários elegíveis)", min_value=1, max_value=50, value=5
+            )
+            n_test_g = st.number_input(
+                "n_test por usuário", min_value=1, max_value=5, value=1
+            )
+            top_k_g = st.number_input(
+                "top_k (metrics K)", min_value=1, max_value=50, value=10
+            )
+            sample_users_g = st.number_input(
+                "sample users (0 = todos)", min_value=0, max_value=1000, value=0
+            )
+        run_grid = st.button("Executar Grid‑Search")
+
+        if run_grid:
+            st.info("Executando grid‑search — isso pode demorar.")
+            with st.spinner("Executando combinações..."):
+                df_grid = run_grid_search(
+                    df_jogos,
+                    df_matriz_utilidade,
+                    ngram_options,
+                    min_df_list,
+                    weight_maps,
+                    min_ratings=int(min_ratings_g),
+                    n_test=int(n_test_g),
+                    top_k=int(top_k_g),
+                    sample_users=int(sample_users_g),
+                )
+            st.success("Grid‑search concluído")
+            st.dataframe(
+                df_grid.sort_values(by=["precision"], ascending=False).reset_index(drop=True)
+            )
+
+            # salvar CSV e oferecer download
+            df_grid.to_csv(GRID_CSV, index=False)
+            csv_bytes = df_grid.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Baixar CSV (grid results)",
+                data=csv_bytes,
+                file_name=GRID_CSV.name,
+                mime="text/csv",
+            )
+
+            # plot: precision/recall/map por configuração
+            df_long = df_grid.melt(
+                id_vars=["ngram_range", "min_df", "weight_map"],
+                value_vars=["precision", "recall", "map"],
+                var_name="metric",
+                value_name="value",
+            )
+            chart = alt.Chart(df_long).mark_line(point=True).encode(
+                x=alt.X("ngram_range:N", title="ngram_range"),
+                y=alt.Y("value:Q", title="valor"),
+                color="metric:N",
+                strokeDash="metric:N",
+                column=alt.Column(
+                    "min_df:N", header=alt.Header(title="min_df")
+                ),
+            ).properties(height=200, width=200)
+            st.altair_chart(chart, use_container_width=True)
+
+            # salvar plot como PNG (render via savechart)
+            try:
+                import matplotlib.pyplot as plt
+
+                fig, ax = plt.subplots(figsize=(8, 3))
+                for m in ["precision", "recall", "map"]:
+                    grp = df_grid.groupby("ngram_range")[m].mean()
+                    ax.plot([str(x) for x in grp.index], grp.values, marker="o", label=m)
+                ax.set_xlabel("ngram_range")
+                ax.set_ylabel("valor médio")
+                ax.legend()
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                st.download_button(
+                    "Baixar gráfico (PNG)",
+                    data=buf,
+                    file_name="grid_metrics.png",
+                    mime="image/png",
+                )
+            except Exception:
+                # matplotlib pode não estar disponível, mas Altair já mostra gráfico
+                pass
+
+    # --- salvar resultado de execução única da avaliação ---
+    with st.expander("Salvar resultado da última avaliação", expanded=False):
+        st.write(
+            "Se desejar, salve o último resultado exibido (ou execute avaliação e salve)."
+        )
+        if st.button("Salvar última execução"):
+            # tenta recuperar parâmetros mostrados antes (se existirem)
+            # como fallback, roda uma avaliação rápida com defaults
+            metrics = evaluate_offline_streamlit(
+                df_jogos,
+                df_matriz_utilidade,
+                ngram_range=(1, 2),
+                min_df=1,
+                weight_map={"caracteristica_1": 2, "caracteristica_3": 2},
+                min_ratings=5,
+                n_test=1,
+                top_k=10,
+                sample_users=50,
+            )
+            params = {
+                "ngram_range": "1-2",
+                "min_df": 1,
+                "weight_map": "{'caracteristica_1':2,'caracteristica_3':2}",
+            }
+            save_metrics_row(params, metrics, SINGLE_CSV)
+            st.success(f"Resultado salvo em {SINGLE_CSV.name}")
+            with open(SINGLE_CSV, "rb") as f:
+                st.download_button(
+                    "Baixar CSV (última execução)",
+                    data=f,
+                    file_name=SINGLE_CSV.name,
+                    mime="text/csv",
+                )
+
+    st.write("---")
+    st.subheader("Trecho para o relatório (metodologia TF‑IDF)")
+    st.markdown(
+        """
+- Pré-processamento: concatenação das características (caracteristica_1..5), remoção de stopwords (pt+en), n-grams (1,2).
+- Vetorizador: TfidfVectorizer (sublinear_tf=True), parâmetros testados: ngram_range ∈ {(1,1),(1,2)}, min_df ∈ {1,2,3,5}, weight_map aplicado repetindo campos.
+- Estratégia de avaliação offline: leave-one-out (n_test itens por usuário) sobre usuários com ≥ min_ratings; métricas calculadas: Precision@K, Recall@K, MAP@K.
+- Combinação híbrida (se aplicável): score_final = α·score_text + (1−α)·score_profile; α ajustado empiricamente.
+"""
     )
-    scores_profile = {n: s for n, s in profile_results}
 
-    # combinação simples
-    combined = {}
-    for name in df_jogos["nome_jogo"]:
-        t = scores_text.get(name, 0.0)
-        p = scores_profile.get(name, 0.0)
-        combined[name] = alpha * t + (1 - alpha) * p
+# ------- Debug / inspeção do Grid (apêndice na página de Recomendações) -------
+import ast
 
-    top_n = st.slider("Número de resultados combinados", 1, 20, 5)
-    top = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:top_n]
+def parse_ngram_string(s: str):
+    # aceita formatos "1,2" ou "1-2" ou tupla já serializada
+    if isinstance(s, (list, tuple)):
+        return tuple(s)
+    if isinstance(s, str):
+        if ',' in s:
+            a,b = s.split(',')
+            return (int(a.strip()), int(b.strip()))
+        if '-' in s:
+            a,b = s.split('-')
+            return (int(a.strip()), int(b.strip()))
+    return (1,2)
 
-    st.write("Resultados combinados:")
-    for nome, score in top:
-        st.markdown(f"**{nome}** — score combinado: {score:.4f}")
+def parse_weight_map(s: str):
+    # tenta converter string para dict (se já for dict retorna)
+    if isinstance(s, dict):
+        return s
+    try:
+        return ast.literal_eval(s)
+    except Exception:
+        # fallback: vazio
+        return {}
+
+def inspect_grid_row_and_show_games(df_row, df_jogos, df_matriz, top_n=5, sample_user=None):
+    """
+    Dado um dicionário/row com parâmetros (ngram_range, min_df, weight_map),
+    reconstrói TF-IDF e mostra top-N recomendações para sample_user.
+    """
+    ngram = parse_ngram_string(df_row.get('ngram_range', '1-2'))
+    min_df = int(df_row.get('min_df', 1))
+    wmap = parse_weight_map(df_row.get('weight_map', '{}'))
+    # constroi tfidf com esses parametros
+    vec, X = build_tfidf_for_games(df_jogos, ngram_range=ngram, min_df=min_df, weight_map=wmap)
+    # escolhe usuário exemplo
+    users = [u for u in df_matriz.index if (df_matriz.loc[u] > 0).sum() > 0]
+    if not users:
+        st.info("Nenhum usuário com avaliações para inspecionar.")
+        return
+    user = sample_user if sample_user in users else users[0]
+    recs = recommend_for_user_from_train(user, df_jogos, df_matriz, X, top_n=top_n)
+    st.markdown(f"**Configuração selecionada:** ngram={ngram}, min_df={min_df}, weight_map={wmap}")
+    st.markdown(f"**Usuário exemplo:** {user} — top {top_n} recomendações")
+    if not recs:
+        st.write("Nenhuma recomendação gerada para este usuário/configuração.")
+    else:
+        for r in recs:
+            st.write(f"- {r}")
+
+# Explanatory text for the UI variables
+st.markdown("### Explicação dos parâmetros (para o relatório)")
+st.markdown("""
+- min_ratings: número mínimo de avaliações que um usuário precisa ter para ser incluído na avaliação offline. Define quem é elegível para o holdout.
+- n_test: quantos itens por usuário são removidos (holdout) para testar. Com n_test=1 usamos leave‑one‑out.
+- sample_users: se >0, uma amostra aleatória de usuários será usada para acelerar a avaliação.
+- top_k: k usado para calcular Precision@K/Recall@K/MAP@K (quanto maior, mais tolerante).
+- ngram_range: (1,1) = apenas unigrams; (1,2) = unigrams + bigrams (capta expressões como "mundo aberto").
+- min_df: termo mínimo de documentos para considerar uma feature no TF‑IDF (ajuda a remover termos raros).
+- weight_map: dicionário que repete campos na construção do documento (ex.: {'caracteristica_1':2} aumenta o peso do gênero). Use valores inteiros ≥1.
+""")
+
+st.markdown("### Por que o Grid‑Search retorna métricas e não títulos de jogos?")
+st.markdown("""
+O Grid‑Search testa combinações de parâmetros e devolve métricas agregadas (Precision/Recall/MAP) — essas métricas resumem a qualidade do ranking para cada configuração, não os títulos individuais.  
+Se quiser ver os títulos recomendados para uma configuração específica, use a ferramenta de inspeção abaixo: selecione a linha do resultado e escolha um usuário exemplo; o app mostrará os jogos recomendados (top‑N) para essa configuração.
+""")
+
+# If grid results file exists, allow inspection
+if (RESULTS_DIR / "evaluation_grid_results.csv").exists():
+    try:
+        df_grid = pd.read_csv(RESULTS_DIR / "evaluation_grid_results.csv")
+        st.write("---")
+        st.subheader("Inspecionar resultados do Grid (mostrar títulos recomendados por configuração)")
+        st.write("Escolha uma linha do CSV de resultados (ou selecione manualmente os parâmetros) e veja top‑N jogos recomendados para um usuário exemplo.")
+        if not df_grid.empty:
+            st.dataframe(df_grid.reset_index(drop=True))
+            idx = st.number_input("Índice da linha do grid para inspeção", min_value=0, max_value=max(0, len(df_grid)-1), value=0)
+            top_n_inspect = st.number_input("Top N jogos a mostrar", min_value=1, max_value=20, value=5)
+            # user selector (lista curta)
+            users = [u for u in df_matriz_utilidade.index if (df_matriz_utilidade.loc[u] > 0).sum() > 0]
+            sample_user = st.selectbox("Usuário exemplo (para ver recomendações)", options=users[:200] if users else ["nenhum"])
+            row = df_grid.iloc[int(idx)].to_dict()
+            if st.button("Mostrar recomendações (para a configuração selecionada)"):
+                inspect_grid_row_and_show_games(row, df_jogos, df_matriz_utilidade, top_n=int(top_n_inspect), sample_user=sample_user)
+    except Exception as e:
+        st.write("Não foi possível carregar o CSV de grid para inspeção:", str(e))
+
+# breve nota final
+st.markdown("___")
+st.markdown("Se preferir, posso também: (a) fazer com que o grid salve, para cada configuração, os *top games* médios; (b) exportar um relatório completo com as melhores configurações e exemplos de recomendações. Diga qual prefere.")
