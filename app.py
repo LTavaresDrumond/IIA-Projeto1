@@ -1394,7 +1394,3 @@ if (RESULTS_DIR / "evaluation_grid_results.csv").exists():
                 inspect_grid_row_and_show_games(row, df_jogos, df_matriz_utilidade, top_n=int(top_n_inspect), sample_user=sample_user)
     except Exception as e:
         st.write("Não foi possível carregar o CSV de grid para inspeção:", str(e))
-
-# breve nota final
-st.markdown("___")
-st.markdown("Se preferir, posso também: (a) fazer com que o grid salve, para cada configuração, os *top games* médios; (b) exportar um relatório completo com as melhores configurações e exemplos de recomendações. Diga qual prefere.")
