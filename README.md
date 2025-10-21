@@ -102,8 +102,6 @@ Implementamos métricas para avaliar a qualidade das recomendações:
 3. **Híbrido com α=0.6**
    - Combina TF-IDF com perfil do usuário
 
-### Métricas de Avaliação
-[Adicione aqui uma tabela ou gráfico com os resultados das diferentes configurações]
 
 ## Conclusão
 
@@ -138,4 +136,4 @@ scikit-learn
 3. Execute: `streamlit run app.py`
 
 ### Deploy
-O projeto está disponível online através do Streamlit Cloud em [adicionar-link-após-deploy]
+O projeto está disponível online através do Streamlit Cloud em https://nextgame.streamlit.app/
