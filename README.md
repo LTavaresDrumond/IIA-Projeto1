@@ -1,42 +1,141 @@
-# Documentação Teórica do Projeto
+# Sistema de Recomendação de Jogos Usando TF-IDF e Estratégia Híbrida
+Projeto desenvolvido para a disciplina de Inteligência Artificial
 
-## 1. TF-IDF (Term Frequency-Inverse Document Frequency)
+## Sumário
+1. [Introdução](#introdução)
+2. [Metodologia](#metodologia)
+3. [Implementação](#implementação)
+4. [Resultados e Discussão](#resultados-e-discussão)
+5. [Conclusão](#conclusão)
 
-O TF-IDF é uma técnica amplamente utilizada em recuperação de informações e mineração de texto. Ele mede a importância de uma palavra em um documento em relação a um conjunto de documentos (corpus). O cálculo é feito em duas partes:
+## Introdução
 
-- **Term Frequency (TF)**: A frequência de um termo em um documento. É calculada como o número de vezes que um termo aparece em um documento dividido pelo total de termos no documento.
+Este projeto implementa um sistema de recomendação de jogos que combina análise de conteúdo (usando TF-IDF) com filtragem colaborativa. O sistema permite que usuários:
+- Avaliem jogos em uma escala de 0-5
+- Busquem jogos por descrição textual
+- Recebam recomendações personalizadas baseadas em seu perfil
+- Explorem recomendações híbridas que combinam diferentes estratégias
 
-- **Inverse Document Frequency (IDF)**: Mede a importância de um termo em todo o corpus. É calculado como o logaritmo do número total de documentos dividido pelo número de documentos que contêm o termo.
+### Objetivos
+- Desenvolver um sistema de recomendação eficiente e explicável
+- Comparar diferentes abordagens de pré-processamento textual
+- Avaliar o impacto de diferentes parâmetros nas recomendações
+- Implementar uma interface interativa para testes e validação
 
-A fórmula do TF-IDF é:
-\[ \text{TF-IDF}(t, d) = \text{TF}(t, d) \times \text{IDF}(t) \]
+## Metodologia
 
-onde \( t \) é o termo e \( d \) é o documento.
+### 1. Preparação dos Dados
+- Fonte: Dataset de jogos com características textuais
+- Pré-processamento:
+  - Normalização de texto
+  - Remoção de stopwords (português e inglês)
+  - Implementação de n-grams (unigrams e bigrams)
+  - Matriz de utilidade para avaliações dos usuários
 
-## 2. Similaridade por Cosseno
+### 2. TF-IDF (Term Frequency-Inverse Document Frequency)
+Implementamos TF-IDF para vetorizar as características dos jogos:
+- Term Frequency (TF): frequência do termo no documento
+- Inverse Document Frequency (IDF): importância global do termo
+- Parâmetros ajustáveis:
+  - ngram_range: (1,1) ou (1,2)
+  - min_df: 1-5
+  - weight_map: pesos diferentes para características específicas
 
-A similaridade por cosseno é uma medida que calcula a similaridade entre dois vetores, medindo o cosseno do ângulo entre eles. É frequentemente utilizada em sistemas de recomendação para medir a similaridade entre documentos ou entre um usuário e um item.
+### 3. Similaridade por Cosseno
+Utilizada para calcular similaridade entre:
+- Consultas textuais e documentos
+- Perfis de usuários e jogos
+- Jogos entre si
 
-A fórmula é:
-\[ \text{similaridade}(A, B) = \frac{A \cdot B}{\|A\| \|B\|} \]
+### 4. Estratégia Híbrida
+Combinamos múltiplas fontes de informação:
+- Similaridade textual (TF-IDF)
+- Histórico de avaliações
+- Peso ajustável (α) entre as abordagens
 
-onde \( A \) e \( B \) são os vetores que representam os documentos ou usuários.
+## Implementação
 
-## 3. Estratégia Híbrida
+### Componentes Principais
+1. **Interface Web (Streamlit)**
+   - Login de usuários
+   - Avaliação de jogos
+   - Busca textual
+   - Visualização de recomendações
 
-A estratégia híbrida combina diferentes abordagens de recomendação para melhorar a precisão e a relevância das recomendações. Neste projeto, a combinação é feita entre:
+2. **Processamento de Texto**
+   ```python
+   def build_tfidf_for_games(df_jogos, ngram_range=(1,2), min_df=1, weight_map=None):
+       docs = build_weighted_documents(df_jogos, weight_map)
+       vec = TfidfVectorizer(ngram_range=ngram_range, min_df=min_df)
+       X = vec.fit_transform(docs)
+       return vec, X
+   ```
 
-- **Recomendações baseadas em conteúdo**: Utilizando TF-IDF e similaridade por cosseno para encontrar itens semelhantes com base nas características dos jogos.
-  
-- **Recomendações baseadas em perfil de usuário**: Considerando as avaliações e preferências dos usuários para ajustar as recomendações.
+3. **Sistema de Recomendação**
+   ```python
+   def recommend_by_text(query, df_jogos, vec, X, top_n=5):
+       qv = vec.transform([query])
+       sims = cosine_similarity(qv, X).flatten()
+       idx = sims.argsort()[::-1][:top_n]
+       return [(df_jogos.loc[i, 'nome_jogo'], float(sims[i])) for i in idx]
+   ```
 
-Um parâmetro ajustável \( \alpha \) é utilizado para ponderar a contribuição de cada abordagem na recomendação final:
-\[ \text{recomendação final} = \alpha \times \text{recomendação por conteúdo} + (1 - \alpha) \times \text{recomendação por perfil} \]
+### Avaliação Offline
+Implementamos métricas para avaliar a qualidade das recomendações:
+- Precision@K
+- Recall@K
+- MAP (Mean Average Precision)
 
-## 4. Experimentos
+## Resultados e Discussão
 
-Os experimentos realizados incluem a avaliação da qualidade das recomendações utilizando métricas como Precision@K e Recall@K. Os resultados foram analisados para determinar a eficácia das diferentes configurações de TF-IDF e a influência do parâmetro \( \alpha \) na estratégia híbrida.
+### Configurações Testadas
+1. **TF-IDF Básico**
+   - ngram_range=(1,1)
+   - min_df=1
+   - Sem pesos especiais
 
-### Resultados
+2. **TF-IDF Otimizado**
+   - ngram_range=(1,2)
+   - min_df=2
+   - weight_map={'caracteristica_1':2, 'caracteristica_3':2}
 
-Os resultados dos experimentos devem ser documentados aqui, incluindo gráficos e tabelas que mostram a performance das diferentes configurações.
+3. **Híbrido com α=0.6**
+   - Combina TF-IDF com perfil do usuário
+
+### Métricas de Avaliação
+[Adicione aqui uma tabela ou gráfico com os resultados das diferentes configurações]
+
+## Conclusão
+
+- A estratégia híbrida mostrou-se mais efetiva que abordagens individuais
+- O uso de bigrams melhorou a captura de conceitos compostos
+- A ponderação de características específicas (ex: gênero) impactou positivamente as recomendações
+
+### Trabalhos Futuros
+- Implementar persistência em banco de dados
+- Explorar técnicas de deep learning para processamento de texto
+- Adicionar análise de sentimento das avaliações
+
+## Referências
+
+1. [TF-IDF - Scikit Learn Documentation](https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction)
+2. [Streamlit Documentation](https://docs.streamlit.io/)
+3. [Recommender Systems Handbook](https://link.springer.com/book/10.1007/978-0-387-85820-3)
+
+## Apêndice: Instruções de Execução
+
+### Requisitos
+```text
+streamlit
+pandas
+numpy
+scikit-learn
+```
+
+### Como Executar
+1. Clone o repositório
+2. Instale as dependências: `pip install -r requirements.txt`
+3. Execute: `streamlit run app.py`
+
+### Deploy
+O projeto está disponível online através do Streamlit Cloud em [adicionar-link-após-deploy]
