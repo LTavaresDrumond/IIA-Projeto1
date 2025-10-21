@@ -555,7 +555,7 @@ def search_game_image(game_name: str, client_id: str, access_token: str) -> str:
     """Busca imagem do jogo na IGDB API"""
     # Fallback: imagem padrão (ícone de jogo genérico)
     fallback_image = "https://placehold.co/264x352/1a1a2e/white?text=Game"
-    
+
     if not client_id or not access_token:
         return fallback_image
 
@@ -586,7 +586,7 @@ def search_game_image(game_name: str, client_id: str, access_token: str) -> str:
 def get_game_image(game_name: str) -> str:
     """Obtém imagem do jogo com fallback para placeholder"""
     fallback_image = "https://placehold.co/264x352/1a1a2e/white?text=Game"
-    
+
     try:
         # Configurações da API - você precisa obter estas credenciais em https://dev.twitch.tv/console
         # Para desenvolvimento, pode deixar vazio e usar placeholders
@@ -798,6 +798,31 @@ st.write(
     unsafe_allow_html=True,
 )
 
+# User info and logout (only show when logged in)
+if st.session_state.page == "rating" and st.session_state.user_email:
+    # Simple centered layout
+    st.write(
+        f"<div style='text-align: center; margin: 20px 0;'><strong>Usuário:</strong> {st.session_state.user_email}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Center the logout button using CSS flexbox
+    st.markdown(
+        """
+        <div style="display: flex; justify-content: center; margin: 20px 0;">
+            <div style="text-align: center;">
+    """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Logout", key="header_logout_btn"):
+        st.session_state.page = "login"
+        st.session_state.user_email = None
+        st.session_state.user_ratings = {}
+        safe_rerun()
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
 # Página de login
 if st.session_state.page == "login":
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -810,9 +835,7 @@ if st.session_state.page == "login":
 
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            login_clicked = st.button(
-                "Entrar", type="primary", width="stretch"
-            )
+            login_clicked = st.button("Entrar", type="primary", width="stretch")
         with col_btn2:
             register_clicked = st.button("Registrar", width="stretch")
 
@@ -862,9 +885,7 @@ elif st.session_state.page == "register":
 
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            register_submit = st.button(
-                "Criar Conta", type="primary", width="stretch"
-            )
+            register_submit = st.button("Criar Conta", type="primary", width="stretch")
         with col_btn2:
             back_to_login = st.button("Voltar ao Login", width="stretch")
 
@@ -922,16 +943,6 @@ elif st.session_state.page == "register":
 
 elif st.session_state.page == "rating":
     try:
-        # Header com logout
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            st.write(f"Usuário: {st.session_state.user_email}")
-            if st.button("Logout"):
-                st.session_state.page = "login"
-                st.session_state.user_email = None
-                st.session_state.user_ratings = {}
-                safe_rerun()
-
         st.subheader("Avalie os Jogos")
 
         # Grid de cards (3 por linha)
@@ -942,11 +953,14 @@ elif st.session_state.page == "rating":
                 with st.container():
                     # Imagem e informações do jogo - wrapped in fixed-size div for cropping
                     game_image_url = get_game_image(row["nome_jogo"])
-                    st.markdown(f"""
+                    st.markdown(
+                        f"""
                         <div style="width: 264px; height: 352px; overflow: hidden; margin: 0 auto 15px auto; border-radius: 12px; border: 3px solid #e0e0e0; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
                             <img src="{game_image_url}" style="width: 100%; height: 100%; object-fit: cover; object-position: center; display: block;">
                         </div>
-                    """, unsafe_allow_html=True)
+                    """,
+                        unsafe_allow_html=True,
+                    )
                     st.markdown(f"**{row['nome_jogo']}**")
                     st.caption(f"{row['caracteristica_1']} | {row['caracteristica_2']}")
 
